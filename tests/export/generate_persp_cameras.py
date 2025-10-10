@@ -6,39 +6,34 @@ except ImportError:
 
 # Write sample JSON with multiple perspective cameras
 
-def write_persp_cameras_json(path="persp_cameras.json"):
-	data = {
-		"CAMERA": {
-			"PERSP": {
-				1: {
-					"location": [0, -5, 2],
-					"direction": [0, 1, -0.3],
-					"focal_length": 50.0,
-					"sensor_width": 36.0,
-					"sensor_height": 24.0,
-					"film_resolution": [1920, 1080],
-				},
-				2: {
-					"location": [5, -5, 3],
-					"direction": [-1, 1, -0.2],
-					"focal_length": 35.0,
-					"sensor_width": 36.0,
-					"sensor_height": 24.0,
-					"film_resolution": [1280, 720],
-				},
-			}
-		}
-	}
-	data["CAMERA"]["PERSP"] = {str(k): v for k, v in data["CAMERA"]["PERSP"].items()}
-	with open(path, "w") as f:
-		json.dump(data, f, indent=4)
+data = {
+    "CAMERA": {
+        "PERSP": {
+            1: {
+                "location": [0, -5, 2],
+                "direction": [0, 1, -0.3],
+                "focal_length": 50.0,
+                "sensor_width": 36.0,
+                "sensor_height": 24.0,
+                "film_resolution": [1920, 1080],
+            },
+            2: {
+                "location": [5, -5, 3],
+                "direction": [-1, 1, -0.2],
+                "focal_length": 35.0,
+                "sensor_width": 36.0,
+                "sensor_height": 24.0,
+                "film_resolution": [1280, 720],
+            },
+        }
+    }
+}
+data["CAMERA"]["PERSP"] = {str(k): v for k, v in data["CAMERA"]["PERSP"].items()}
 
 # Load perspective cameras into Blender
 
 def load_persp_cameras_from_json(path="persp_cameras.json"):
 	import mathutils
-	with open(path, "r") as f:
-		data = json.load(f)
 	persp = data.get("CAMERA", {}).get("PERSP", {})
 	for _id, params in persp.items():
 		loc = params.get("location", [0, 0, 0])
@@ -62,5 +57,4 @@ def load_persp_cameras_from_json(path="persp_cameras.json"):
 		cam.data.sensor_height = sh
 
 if __name__ == "__main__":
-	write_persp_cameras_json()
 	load_persp_cameras_from_json()

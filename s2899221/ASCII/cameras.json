@@ -1,0 +1,44 @@
+{
+    "CAMERA": {
+        "PERSP": {
+            "1": {
+                "location": {
+                    "x": 0.0,
+                    "y": -5.0,
+                    "z": 2.0
+                },
+                "direction": {
+                    "x": -0.0,
+                    "y": 0.9578263213120298,
+                    "z": -0.2873477652633898
+                },
+                "focal_length": 50.0,
+                "sensor_width": 36.0,
+                "sensor_height": 24.0,
+                "film_resolution": {
+                    "x": 1920,
+                    "y": 1080
+                }
+            },
+            "2": {
+                "location": {
+                    "x": 5.0,
+                    "y": -5.0,
+                    "z": 3.0
+                },
+                "direction": {
+                    "x": -0.7001401188572348,
+                    "y": 0.7001399996479453,
+                    "z": -0.14002783601681587
+                },
+                "focal_length": 35.0,
+                "sensor_width": 36.0,
+                "sensor_height": 24.0,
+                "film_resolution": {
+                    "x": 1920,
+                    "y": 1080
+                }
+            }
+        }
+    }
+}

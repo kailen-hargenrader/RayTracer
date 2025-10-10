@@ -16,11 +16,25 @@ class id_generator:
 
 id_gen = id_generator()
 
+def vec3_to_dict(v):
+    return {"x": float(v[0]), "y": float(v[1]), "z": float(v[2])}
+
+def list3_to_dict(v):
+    return {"x": float(v[0]), "y": float(v[1]), "z": float(v[2])}
+
+def vec2_to_dict(v):
+    return {"x": int(v[0]), "y": int(v[1])}
+
 def mesh_handler(mesh_dict, mesh_obj):
     def cube_handler(cube_dict, cube_obj):
         mw = cube_obj.matrix_world
-        translation = list(mw.to_translation())
-        rotation = list(mw.to_euler('XYZ'))
+        translation = vec3_to_dict(mw.to_translation())
+        eul = mw.to_euler('XYZ')
+        rotation = {
+            "roll": float(eul.x),
+            "pitch": float(eul.y),
+            "yaw": float(eul.z),
+        }
         scale_vec = mw.to_scale()
         # Export a single scalar (1D) scale. If non-uniform, use the average and warn.
         if abs(scale_vec.x - scale_vec.y) > 1e-6 or abs(scale_vec.y - scale_vec.z) > 1e-6:
@@ -42,7 +56,7 @@ def mesh_handler(mesh_dict, mesh_obj):
         radius = float((scale_vec.x + scale_vec.y + scale_vec.z) / 3.0)
 
         sphere_params = {
-            "location": location,
+            "location": vec3_to_dict(location),
             "radius": radius,
         }
         sphere_dict[id_gen.get_id()] = sphere_params
@@ -104,7 +118,7 @@ def mesh_handler(mesh_dict, mesh_obj):
                 warnings.warn("Plane has no bounding box; corners unavailable")
 
         plane_params = {
-            "corners": corners,
+            "corners": [list3_to_dict(p) for p in corners],
         }
         plane_dict[id_gen.get_id()] = plane_params
 
@@ -133,7 +147,7 @@ def camera_handler(cam_dict, cam_obj):
     def perspective_handler(persp_dict, persp_obj):
         mw = persp_obj.matrix_world
         # World-space camera location
-        location = list(mw.to_translation())
+        location = vec3_to_dict(mw.to_translation())
         # Camera looks down local -Z. Transform to world and normalize
         gaze = [-mw[0][2], -mw[1][2], -mw[2][2]]
         length = (gaze[0] ** 2 + gaze[1] ** 2 + gaze[2] ** 2) ** 0.5
@@ -153,11 +167,11 @@ def camera_handler(cam_dict, cam_obj):
             res_y = int(scene.render.resolution_y * scene.render.resolution_percentage / 100)
         except Exception:
             res_x, res_y = 0, 0
-        film_resolution = [res_x, res_y]
+        film_resolution = vec2_to_dict([res_x, res_y])
 
         persp_params = {
             "location": location,
-            "direction": direction,
+            "direction": list3_to_dict(direction),
             "focal_length": focal_length,
             "sensor_width": sensor_width,
             "sensor_height": sensor_height,
@@ -185,7 +199,7 @@ def camera_handler(cam_dict, cam_obj):
 def light_handler(light_dict, light_obj):
     def point_handler(point_dict, point_obj):
         mw = point_obj.matrix_world
-        location = list(mw.to_translation())
+        location = vec3_to_dict(mw.to_translation())
         energy = float(getattr(point_obj.data, "energy", 0.0))
         radiant_intensity = energy / (4.0 * math.pi)
 
@@ -196,7 +210,7 @@ def light_handler(light_dict, light_obj):
         point_dict[id_gen.get_id()] = point_params
 
     SUPPORTED_LIGHT_DATATYPE_TO_HANDLER = {
-        "point": point_handler,
+        "POINT": point_handler,
     }
 
     def is_supported_light_type(light_type):
