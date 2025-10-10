@@ -10,7 +10,7 @@ image_width_px = 1920
 image_height_px = 1080
 
 # World point to project
-point_world = np.array([1.0, 2.0, 0.5])
+point_world = np.array([1.0, 2.0, 1.5])
 
 # Normalize the forward (camera direction) vector
 forward = camera_direction / np.linalg.norm(camera_direction)

@@ -10,7 +10,7 @@ int main() {
         return 1;
     }
 
-    Vec3 worldPoint(1.0, 2.0, 0.5); // replace with your point
+    Vec3 worldPoint(1.0, 2.0, 1.5); // replace with your point
     int px = 0, py = 0;
     if (cam.worldToPixel(worldPoint, px, py)) {
         std::cout << "Pixel: (" << px << ", " << py << ")\n";

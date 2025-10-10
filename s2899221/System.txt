@@ -1,0 +1,2 @@
+Windows 11 Pro
+MSVC 19.44.35217 for x86
