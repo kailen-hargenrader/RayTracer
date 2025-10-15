@@ -1,0 +1,51 @@
+{
+    "MESH": {
+        "Cylinder": {
+            "1": {
+                "translation": {
+                    "x": 0.0,
+                    "y": 0.0,
+                    "z": 0.0
+                },
+                "rotation": {
+                    "roll": 0.0,
+                    "pitch": -0.0,
+                    "yaw": 0.0
+                },
+                "scale": 1.0,
+                "radius": 1.0,
+                "length": 2.0
+            },
+            "2": {
+                "translation": {
+                    "x": 2.0,
+                    "y": 0.0,
+                    "z": 0.0
+                },
+                "rotation": {
+                    "roll": 0.0,
+                    "pitch": 0.5,
+                    "yaw": 0.0
+                },
+                "scale": 0.5,
+                "radius": 0.5,
+                "length": 1.0
+            },
+            "3": {
+                "translation": {
+                    "x": 0.0,
+                    "y": 2.0,
+                    "z": 0.0
+                },
+                "rotation": {
+                    "roll": 0.30000001192092896,
+                    "pitch": 0.6000000238418579,
+                    "yaw": 0.0
+                },
+                "scale": 1.50000003973643,
+                "radius": 1.5000000596046448,
+                "length": 3.0
+            }
+        }
+    }
+}

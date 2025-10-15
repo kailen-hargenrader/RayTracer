@@ -47,6 +47,35 @@ def mesh_handler(mesh_dict, mesh_obj):
             "scale": scale,
         }
         cube_dict[id_gen.get_id()] = cube_params
+    def cylinder_handler(cylinder_dict, cylinder_obj):
+        mw = cylinder_obj.matrix_world
+        translation = vec3_to_dict(mw.to_translation())
+        eul = mw.to_euler('XYZ')
+        rotation = {
+            "roll": float(eul.x),
+            "pitch": float(eul.y),
+            "yaw": float(eul.z),
+        }
+        scale_vec = mw.to_scale()
+        # Derive radius from X/Y scales (assumes unit-radius cylinder in local space)
+        if abs(scale_vec.x - scale_vec.y) > 1e-6:
+            warnings.warn("Non-uniform XY scale on cylinder; exporting average as radius")
+        radius = float((scale_vec.x + scale_vec.y) / 2.0)
+        # Derive length from Z scale (assumes depth 2 in local space)
+        length = float(2.0 * scale_vec.z)
+        # Export a single scalar (1D) scale for overall size, mirroring cubes
+        if abs(scale_vec.x - scale_vec.y) > 1e-6 or abs(scale_vec.y - scale_vec.z) > 1e-6:
+            warnings.warn("Non-uniform scale on cylinder; exporting average as 1D scale")
+        scale = float((scale_vec.x + scale_vec.y + scale_vec.z) / 3.0)
+
+        cylinder_params = {
+            "translation": translation,
+            "rotation": rotation,
+            "scale": scale,
+            "radius": radius,
+            "length": length,
+        }
+        cylinder_dict[id_gen.get_id()] = cylinder_params
     def sphere_handler(sphere_dict, sphere_obj):
         mw = sphere_obj.matrix_world
         location = list(mw.to_translation())
@@ -124,6 +153,7 @@ def mesh_handler(mesh_dict, mesh_obj):
 
     SUPPORTED_MESH_DATATYPE_TO_HANDLER = {
         "Cube": cube_handler,
+        "Cylinder": cylinder_handler,
         "Sphere": sphere_handler,
         "Plane": plane_handler,
     }
@@ -261,5 +291,5 @@ def export_json_from_data(data, path):
 if __name__ == "__main__":
     scene = bpy.context.scene
     data = get_data_from_scene(scene)
-    filepath = os.path.join(os.path.expanduser("~"), "RayTracer", "s2899221", "ASCII", "cubes.json")
+    filepath = os.path.join(os.path.expanduser("~"), "RayTracer", "s2899221", "ASCII", "cylinders.json")
     export_json_from_data(data, filepath)

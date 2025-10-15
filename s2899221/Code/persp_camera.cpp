@@ -164,6 +164,12 @@ public:
         image_height_px = height_px;
     }
 
+    // Expose the image resolution for sampling purposes.
+    void getImageResolution(int& width_px, int& height_px) const {
+        width_px = image_width_px;
+        height_px = image_height_px;
+    }
+
     // Update rotation matrix based on location and direction
     void updateRotationMatrix(const Vec3& cam_pos, const Vec3& cam_dir) {
         position = cam_pos;
@@ -173,17 +179,18 @@ public:
         // Assume world up vector is (0,0,1)
         Vec3 world_up(0,0,1);
 
-        // right = normalize(cross(world_up, forward))
-        Vec3 right = cross(world_up, forward).normalized();
+        // Use a right-handed basis: right = normalize(cross(forward, world_up))
+        Vec3 right = cross(forward, world_up).normalized();
 
         // if right length is zero (camera looking straight up/down), fix by choosing another up
         if (right.length() < 1e-6) {
             // use (0,1,0) as up instead
             world_up = Vec3(0,1,0);
-            right = cross(world_up, forward).normalized();
+            right = cross(forward, world_up).normalized();
         }
 
-        Vec3 up = cross(forward, right);
+        // up from right-handed basis
+        Vec3 up = cross(right, forward);
 
         // Set rotation matrix columns: right, up, forward
         for (int i=0; i<3; ++i) {
@@ -216,6 +223,30 @@ public:
         pixel_y = static_cast<int>((1.0 - ((y_sensor / sensor_height_mm) + 0.5)) * image_height_px);
 
         return true;
+    }
+
+    // Convert a pixel position (in pixel coordinates) to a world-space ray.
+    // The ray originates at the camera position and points through the pixel center.
+    void pixelToRay(double pixel_x, double pixel_y, Vec3& ray_origin, Vec3& ray_direction) const {
+        // Normalize pixel coordinates to [0,1)
+        const double nx = pixel_x / static_cast<double>(image_width_px);
+        const double ny = pixel_y / static_cast<double>(image_height_px);
+
+        // Map to sensor plane in millimeters
+        const double x_sensor = sensor_width_mm * (nx - 0.5);
+        const double y_sensor = sensor_height_mm * (0.5 - ny);
+
+        // Direction in camera space
+        const Vec3 dir_cam(x_sensor, y_sensor, focal_length_mm);
+
+        // Rotate to world space: dir_world = R * dir_cam
+        Vec3 dir_world;
+        dir_world.x = rotation[0][0]*dir_cam.x + rotation[0][1]*dir_cam.y + rotation[0][2]*dir_cam.z;
+        dir_world.y = rotation[1][0]*dir_cam.x + rotation[1][1]*dir_cam.y + rotation[1][2]*dir_cam.z;
+        dir_world.z = rotation[2][0]*dir_cam.x + rotation[2][1]*dir_cam.y + rotation[2][2]*dir_cam.z;
+
+        ray_origin = position;
+        ray_direction = dir_world.normalized();
     }
 };
 

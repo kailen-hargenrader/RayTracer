@@ -45,11 +45,17 @@ public:
     void setSensorSize(double width_mm, double height_mm);
     void setImageResolution(int width_px, int height_px);
 
+    /** Get the image resolution in pixels. */
+    void getImageResolution(int& width_px, int& height_px) const;
+
     /** Update orientation from camera location and forward direction. */
     void updateRotationMatrix(const Vec3& cam_pos, const Vec3& cam_dir);
 
     /** Project a world point to pixel coordinates. Returns false if behind camera. */
     bool worldToPixel(const Vec3& point_world, int& pixel_x, int& pixel_y);
+
+    /** Convert a pixel (x,y) to a world-space ray (origin, direction). */
+    void pixelToRay(double pixel_x, double pixel_y, Vec3& ray_origin, Vec3& ray_direction) const;
 };
 
 // Reads camera parameters from a JSON file and updates the provided Camera instance.
