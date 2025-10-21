@@ -1,77 +1,14 @@
 #include "mesh.h"
+#include "utils.h"
 
 #include <iostream>
 #include <sstream>
 #include <fstream>
 #include <regex>
-#include <cctype>
+#include <cmath>
+#include <limits>
 
-// Utilities copied/adapted from persp_camera.cpp for simple JSON-like parsing
-static bool extract_object_block(const std::string& src, const std::string& key, std::string& out_block) {
-    const std::string quoted_key = "\"" + key + "\"";
-    const size_t key_pos = src.find(quoted_key);
-    if (key_pos == std::string::npos) return false;
-
-    size_t colon_pos = src.find(':', key_pos + quoted_key.size());
-    if (colon_pos == std::string::npos) return false;
-
-    // Allow either object { } or array [ ] blocks
-    size_t opener_pos = std::string::npos;
-    char open_char = 0;
-    char close_char = 0;
-    // Find next non-space char after colon
-    size_t i = colon_pos + 1;
-    while (i < src.size() && std::isspace(static_cast<unsigned char>(src[i]))) ++i;
-    if (i >= src.size()) return false;
-    if (src[i] == '{' || src[i] == '[') {
-        opener_pos = i;
-        open_char = src[i];
-        close_char = (open_char == '{') ? '}' : ']';
-    } else {
-        // Not a block
-        return false;
-    }
-
-    int depth = 0;
-    bool in_string = false;
-    bool is_escaped = false;
-    for (size_t j = opener_pos; j < src.size(); ++j) {
-        const char c = src[j];
-        if (in_string) {
-            if (is_escaped) {
-                is_escaped = false;
-            } else if (c == '\\') {
-                is_escaped = true;
-            } else if (c == '"') {
-                in_string = false;
-            }
-            continue;
-        }
-        if (c == '"') { in_string = true; continue; }
-        if (c == open_char) {
-            if (depth == 0) opener_pos = j;
-            ++depth;
-        } else if (c == close_char) {
-            --depth;
-            if (depth == 0) {
-                out_block = src.substr(opener_pos + 1, j - opener_pos - 1);
-                return true;
-            }
-        }
-    }
-    return false;
-}
-
-static bool parse_number(const std::string& src, const std::string& key, double& out) {
-    std::regex r("\\\"" + key + "\\\"\\s*:\\s*([-+eE0-9\\.]+)");
-    std::smatch m; if (!std::regex_search(src, m, r)) return false; out = std::stod(m[1]); return true;
-}
-
-static bool parse_vec3(const std::string& src, const std::string& key, Float3& out) {
-    std::string block; if (!extract_object_block(src, key, block)) return false;
-    double x, y, z; if (!parse_number(block, "x", x)) return false; if (!parse_number(block, "y", y)) return false; if (!parse_number(block, "z", z)) return false;
-    out = Float3{ x, y, z }; return true;
-}
+// JSON-like parsing helpers are implemented in utils.{h,cpp}
 
 // ---------- Cube ----------
 Cube::Cube() : m_translation{0,0,0}, m_rotation{0,0,0}, m_scale(1.0) {}
@@ -92,14 +29,16 @@ std::vector<Cube> Cube::read_from_json(const std::string& class_block) {
         std::string sub;
         // Build a temporary string starting from this position to ensure extract works
         std::string tail = class_block.substr(key_pos);
-        if (!extract_object_block(tail, it->str(1), sub)) continue;
+        if (!util_json::extract_object_block(tail, it->str(1), sub)) continue;
 
         Float3 tr{0,0,0}; EulerAngles rot{0,0,0}; double scale = 1.0;
-        parse_vec3(sub, "translation", tr);
+        {
+            double x=0,y=0,z=0; if (util_json::parse_vec3(sub, "translation", x, y, z)) tr = Float3{ x, y, z };
+        }
         // rotation fields named roll, pitch, yaw
-        double r=0,p=0,y=0; parse_number(sub, "roll", r); parse_number(sub, "pitch", p); parse_number(sub, "yaw", y);
+        double r=0,p=0,y=0; util_json::parse_number(sub, "roll", r); util_json::parse_number(sub, "pitch", p); util_json::parse_number(sub, "yaw", y);
         rot = EulerAngles{ r, p, y };
-        parse_number(sub, "scale", scale);
+        util_json::parse_number(sub, "scale", scale);
 
         result.emplace_back(tr, rot, scale);
     }
@@ -110,6 +49,134 @@ void Cube::write_to_console(std::ostream& out) const {
     out << "Cube(translation=[" << m_translation.x << ", " << m_translation.y << ", " << m_translation.z
         << "], rotation(rpy)=[" << m_rotation.roll << ", " << m_rotation.pitch << ", " << m_rotation.yaw
         << "], scale=" << m_scale << ")\n";
+}
+
+static inline void build_rotation_matrix_rpy(double roll, double pitch, double yaw, double R[3][3]) {
+    const double cr = std::cos(roll), sr = std::sin(roll);
+    const double cp = std::cos(pitch), sp = std::sin(pitch);
+    const double cy = std::cos(yaw), sy = std::sin(yaw);
+
+    // R = Rz(yaw) * Ry(pitch) * Rx(roll)
+    const double Rz[3][3] = { { cy, -sy, 0 }, { sy, cy, 0 }, { 0, 0, 1 } };
+    const double Ry[3][3] = { { cp, 0, sp }, { 0, 1, 0 }, { -sp, 0, cp } };
+    const double Rx[3][3] = { { 1, 0, 0 }, { 0, cr, -sr }, { 0, sr, cr } };
+
+    double A[3][3];
+    // A = Ry * Rx
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) {
+            A[i][j] = Ry[i][0]*Rx[0][j] + Ry[i][1]*Rx[1][j] + Ry[i][2]*Rx[2][j];
+        }
+    }
+    // R = Rz * A
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) {
+            R[i][j] = Rz[i][0]*A[0][j] + Rz[i][1]*A[1][j] + Rz[i][2]*A[2][j];
+        }
+    }
+}
+
+static inline void mul_mat_vec(const double M[3][3], const double v[3], double out[3]) {
+    out[0] = M[0][0]*v[0] + M[0][1]*v[1] + M[0][2]*v[2];
+    out[1] = M[1][0]*v[0] + M[1][1]*v[1] + M[1][2]*v[2];
+    out[2] = M[2][0]*v[0] + M[2][1]*v[1] + M[2][2]*v[2];
+}
+
+static inline void transpose3(const double M[3][3], double MT[3][3]) {
+    MT[0][0] = M[0][0]; MT[0][1] = M[1][0]; MT[0][2] = M[2][0];
+    MT[1][0] = M[0][1]; MT[1][1] = M[1][1]; MT[1][2] = M[2][1];
+    MT[2][0] = M[0][2]; MT[2][1] = M[1][2]; MT[2][2] = M[2][2];
+}
+
+bool Cube::intersect(const Ray& ray, Hit& hit) const {
+    // Build rotation matrix for local->world; we need its transpose for world->local
+    double R[3][3];
+    build_rotation_matrix_rpy(m_rotation.roll, m_rotation.pitch, m_rotation.yaw, R);
+    double RT[3][3];
+    transpose3(R, RT);
+
+    // World ray
+    const RayVec3 ro_w = ray.getPosition();
+    const RayVec3 rd_w = ray.getDirection();
+
+    // Translate to object frame and apply inverse rotation and inverse uniform scale
+    const double to_obj[3] = { ro_w.x - m_translation.x, ro_w.y - m_translation.y, ro_w.z - m_translation.z };
+    double ro_r[3]; mul_mat_vec(RT, to_obj, ro_r);
+    double rd_r[3]; mul_mat_vec(RT, (double[3]){ rd_w.x, rd_w.y, rd_w.z }, rd_r);
+
+    const double invS = (m_scale != 0.0) ? (1.0 / m_scale) : 0.0;
+    double ro[3] = { ro_r[0] * invS, ro_r[1] * invS, ro_r[2] * invS };
+    double rd[3] = { rd_r[0] * invS, rd_r[1] * invS, rd_r[2] * invS };
+
+    // Slab intersection with AABB [-1,1]^3
+    const double eps = 1e-12;
+    double tmin = -std::numeric_limits<double>::infinity();
+    double tmax =  std::numeric_limits<double>::infinity();
+    double n_enter[3] = {0,0,0};
+    double n_exit[3]  = {0,0,0};
+
+    for (int axis = 0; axis < 3; ++axis) {
+        const double o = ro[axis];
+        const double d = rd[axis];
+        const double low = -1.0, high = 1.0;
+
+        if (std::abs(d) < eps) {
+            if (o < low || o > high) return false; // parallel and outside
+            // parallel and inside; no update to tmin/tmax
+            continue;
+        }
+
+        double t1 = (low - o) / d;
+        double t2 = (high - o) / d;
+
+        double n1[3] = {0,0,0}; n1[axis] = -1.0; // normal for low plane
+        double n2[3] = {0,0,0}; n2[axis] =  1.0; // normal for high plane
+
+        if (t1 > t2) { std::swap(t1, t2); std::swap(n1, n2); }
+
+        if (t1 > tmin) { tmin = t1; n_enter[0] = n1[0]; n_enter[1] = n1[1]; n_enter[2] = n1[2]; }
+        if (t2 < tmax) { tmax = t2; n_exit[0]  = n2[0]; n_exit[1]  = n2[1]; n_exit[2]  = n2[2]; }
+
+        if (tmin > tmax) return false;
+    }
+
+    if (tmax < 0.0) return false; // box is behind the ray origin
+
+    const double t_hit = (tmin >= 0.0) ? tmin : tmax; // if inside, use exit
+    const bool used_enter = (tmin >= 0.0);
+    const double* n_local = used_enter ? n_enter : n_exit;
+
+    // Intersection point in local cube space
+    double p_local[3] = { ro[0] + t_hit * rd[0], ro[1] + t_hit * rd[1], ro[2] + t_hit * rd[2] };
+
+    // Transform normal back to world (rotation only)
+    double n_world[3]; mul_mat_vec(R, n_local, n_world);
+    // Normalize normal to be unit length
+    const double nlen = std::sqrt(n_world[0]*n_world[0] + n_world[1]*n_world[1] + n_world[2]*n_world[2]);
+    double n_unit[3] = { n_world[0]/nlen, n_world[1]/nlen, n_world[2]/nlen };
+
+    // Transform intersection point back to world: p_w = T + R * (p_local * scale)
+    double p_scaled[3] = { p_local[0] * m_scale, p_local[1] * m_scale, p_local[2] * m_scale };
+    double p_world[3]; mul_mat_vec(R, p_scaled, p_world);
+    p_world[0] += m_translation.x; p_world[1] += m_translation.y; p_world[2] += m_translation.z;
+
+    // Reflected direction in world space: r = d - 2 (d·n) n (n must be unit)
+    const double d_world[3] = { rd_w.x, rd_w.y, rd_w.z };
+    const double d_dot_n = d_world[0]*n_unit[0] + d_world[1]*n_unit[1] + d_world[2]*n_unit[2];
+    double r_world[3] = { d_world[0] - 2.0 * d_dot_n * n_unit[0],
+                          d_world[1] - 2.0 * d_dot_n * n_unit[1],
+                          d_world[2] - 2.0 * d_dot_n * n_unit[2] };
+
+    // Populate Hit (world coordinates)
+    HitVec3 ip{ p_world[0], p_world[1], p_world[2] };
+    HitVec3 nrm{ n_unit[0], n_unit[1], n_unit[2] };
+    HitVec3 refl{ r_world[0], r_world[1], r_world[2] };
+
+    hit.setIntersectionPoint(ip);
+    hit.setSurfaceNormal(nrm);
+    hit.setReflectedDirection(refl);
+    hit.setDistanceAlongRay(t_hit);
+    return true;
 }
 
 // ---------- Cylinder ----------
@@ -125,15 +192,15 @@ std::vector<Cylinder> Cylinder::read_from_json(const std::string& class_block) {
     for (auto it = begin; it != end; ++it) {
         const size_t key_pos = static_cast<size_t>(it->position());
         std::string tail = class_block.substr(key_pos);
-        std::string sub; if (!extract_object_block(tail, it->str(1), sub)) continue;
+        std::string sub; if (!util_json::extract_object_block(tail, it->str(1), sub)) continue;
 
         Float3 tr{0,0,0}; EulerAngles rot{0,0,0}; double scale = 1.0; double radius = 1.0; double length = 1.0;
-        parse_vec3(sub, "translation", tr);
-        double r=0,p=0,y=0; parse_number(sub, "roll", r); parse_number(sub, "pitch", p); parse_number(sub, "yaw", y);
+        { double x=0,y=0,z=0; if (util_json::parse_vec3(sub, "translation", x, y, z)) tr = Float3{ x, y, z }; }
+        double r=0,p=0,y=0; util_json::parse_number(sub, "roll", r); util_json::parse_number(sub, "pitch", p); util_json::parse_number(sub, "yaw", y);
         rot = EulerAngles{ r, p, y };
-        parse_number(sub, "scale", scale);
-        parse_number(sub, "radius", radius);
-        parse_number(sub, "length", length);
+        util_json::parse_number(sub, "scale", scale);
+        util_json::parse_number(sub, "radius", radius);
+        util_json::parse_number(sub, "length", length);
 
         result.emplace_back(tr, rot, scale, radius, length);
     }
@@ -158,11 +225,11 @@ std::vector<Sphere> Sphere::read_from_json(const std::string& class_block) {
     for (auto it = begin; it != end; ++it) {
         const size_t key_pos = static_cast<size_t>(it->position());
         std::string tail = class_block.substr(key_pos);
-        std::string sub; if (!extract_object_block(tail, it->str(1), sub)) continue;
+        std::string sub; if (!util_json::extract_object_block(tail, it->str(1), sub)) continue;
 
         Float3 loc{0,0,0}; double radius = 1.0;
-        parse_vec3(sub, "location", loc);
-        parse_number(sub, "radius", radius);
+        { double x=0,y=0,z=0; if (util_json::parse_vec3(sub, "location", x, y, z)) loc = Float3{ x, y, z }; }
+        util_json::parse_number(sub, "radius", radius);
         result.emplace_back(loc, radius);
     }
     return result;
@@ -185,11 +252,11 @@ std::vector<Plane> Plane::read_from_json(const std::string& class_block) {
     for (auto it = begin; it != end; ++it) {
         const size_t key_pos = static_cast<size_t>(it->position());
         std::string tail = class_block.substr(key_pos);
-        std::string sub; if (!extract_object_block(tail, it->str(1), sub)) continue;
+        std::string sub; if (!util_json::extract_object_block(tail, it->str(1), sub)) continue;
 
         // corners is an array of 4 objects {x,y,z}
         std::string corners_block;
-        if (!extract_object_block(sub, "corners", corners_block)) {
+        if (!util_json::extract_object_block(sub, "corners", corners_block)) {
             continue;
         }
         // corners_block here is content between '[' and ']' thanks to support in extract_object_block
@@ -214,7 +281,7 @@ std::vector<Plane> Plane::read_from_json(const std::string& class_block) {
             const std::string one_corner = corners_block.substr(brace_pos + 1, end_pos - brace_pos - 1);
             search_offset = end_pos + 1;
 
-            double x=0,y=0,z=0; parse_number(one_corner, "x", x); parse_number(one_corner, "y", y); parse_number(one_corner, "z", z);
+            double x=0,y=0,z=0; util_json::parse_number(one_corner, "x", x); util_json::parse_number(one_corner, "y", y); util_json::parse_number(one_corner, "z", z);
             corners.push_back(Float3{ x, y, z });
             if (corners.size() == 4) break;
         }

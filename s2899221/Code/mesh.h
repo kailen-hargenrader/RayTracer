@@ -5,6 +5,10 @@
 #include <vector>
 #include <iosfwd>
 
+// Forward declarations to avoid including full headers here
+class Hit;
+class Ray;
+
 /** Base class for all mesh types. */
 class Mesh {
 public:
@@ -12,6 +16,9 @@ public:
 
     /** Write a human-readable representation to the provided stream. */
     virtual void write_to_console(std::ostream& out) const = 0;
+
+    /** Intersect this mesh with a ray; populate Hit on success. */
+    virtual bool intersect(const Ray& ray, Hit& hit) const { return false; }
 };
 
 /** Simple 3D point/vector container used by mesh shapes. */
@@ -36,6 +43,8 @@ public:
 
     static std::vector<Cube> read_from_json(const std::string& class_block);
     void write_to_console(std::ostream& out) const override;
+
+    bool intersect(const Ray& ray, Hit& hit) const override;
 
 private:
     Float3 m_translation;

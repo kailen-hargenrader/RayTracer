@@ -3,6 +3,7 @@
 #include <sstream>
 #include <regex>
 #include <cmath>
+#include "utils.h"
 
 struct Vec3 {
     double x, y, z;
@@ -36,85 +37,7 @@ struct Vec3 {
 // Extracts the inner contents of an object block that follows a key in JSON-like text.
 // Example: given src containing "\"FOO\": { ... }" and key "FOO",
 // this returns the substring between the braces of that object (without the braces).
-static bool extract_object_block(const std::string& src, const std::string& key, std::string& out_block) {
-    const std::string quoted_key = "\"" + key + "\"";
-    const size_t key_pos = src.find(quoted_key);
-    if (key_pos == std::string::npos) return false;
-
-    // Find the colon after the key
-    size_t colon_pos = src.find(':', key_pos + quoted_key.size());
-    if (colon_pos == std::string::npos) return false;
-
-    // Find the opening brace of the object value
-    size_t brace_start = src.find('{', colon_pos + 1);
-    if (brace_start == std::string::npos) return false;
-
-    // Walk forward and match braces, skipping over string contents
-    int depth = 0;
-    bool in_string = false;
-    bool is_escaped = false;
-    for (size_t i = brace_start; i < src.size(); ++i) {
-        const char c = src[i];
-        if (in_string) {
-            if (is_escaped) {
-                is_escaped = false;
-            } else if (c == '\\') {
-                is_escaped = true;
-            } else if (c == '"') {
-                in_string = false;
-            }
-            continue;
-        }
-
-        if (c == '"') {
-            in_string = true;
-            continue;
-        }
-
-        if (c == '{') {
-            if (depth == 0) brace_start = i;
-            ++depth;
-        } else if (c == '}') {
-            --depth;
-            if (depth == 0) {
-                const size_t brace_end = i;
-                out_block = src.substr(brace_start + 1, brace_end - brace_start - 1);
-                return true;
-            }
-        }
-    }
-    return false;
-}
-
-// Parses a Vec3 from a nested object block like { "x": <num>, "y": <num>, "z": <num> }
-static bool parse_vec3_block(const std::string& src, const std::string& key, Vec3& out) {
-    std::string block;
-    if (!extract_object_block(src, key, block)) return false;
-
-    std::smatch m;
-    std::regex rx_x("\\\"x\\\"\\s*:\\s*([-+eE0-9\\.]+)");
-    std::regex rx_y("\\\"y\\\"\\s*:\\s*([-+eE0-9\\.]+)");
-    std::regex rx_z("\\\"z\\\"\\s*:\\s*([-+eE0-9\\.]+)");
-    std::smatch mx, my, mz;
-    if (!std::regex_search(block, mx, rx_x)) return false;
-    if (!std::regex_search(block, my, rx_y)) return false;
-    if (!std::regex_search(block, mz, rx_z)) return false;
-    out = Vec3(std::stod(mx[1]), std::stod(my[1]), std::stod(mz[1]));
-    return true;
-}
-
-// Parses two ints from a nested object block like { "x": <int>, "y": <int> }
-static bool parse_vec2i_block(const std::string& src, const std::string& key, int& outx, int& outy) {
-    std::string block;
-    if (!extract_object_block(src, key, block)) return false;
-
-    std::regex rx("\\\"x\\\"\\s*:\\s*([0-9]+)[^0-9]+\\\"y\\\"\\s*:\\s*([0-9]+)");
-    std::smatch m;
-    if (!std::regex_search(block, m, rx)) return false;
-    outx = std::stoi(m[1]);
-    outy = std::stoi(m[2]);
-    return true;
-}
+// JSON-like parsing helpers are implemented in utils.{h,cpp}
 
 class Camera {
 private:
@@ -264,15 +187,15 @@ bool read_camera_from_json(const std::string& json_filepath, const std::string& 
 
     // Extract blocks step-by-step: CAMERA -> PERSP -> camera_id
     std::string camera_block;
-    if (!extract_object_block(content, "CAMERA", camera_block)) {
+    if (!util_json::extract_object_block(content, "CAMERA", camera_block)) {
         return false;
     }
     std::string persp_block;
-    if (!extract_object_block(camera_block, "PERSP", persp_block)) {
+    if (!util_json::extract_object_block(camera_block, "PERSP", persp_block)) {
         return false;
     }
     std::string cam_block;
-    if (!extract_object_block(persp_block, camera_id, cam_block)) {
+    if (!util_json::extract_object_block(persp_block, camera_id, cam_block)) {
         return false;
     }
 
@@ -283,12 +206,16 @@ bool read_camera_from_json(const std::string& json_filepath, const std::string& 
     Vec3 location, direction;
     double focal = 0.0, sensor_w = 0.0, sensor_h = 0.0; int resx = 0, resy = 0;
     bool ok = true;
-    ok &= parse_vec3_block(cam_block, "location", location);
-    ok &= parse_vec3_block(cam_block, "direction", direction);
-    ok &= extract_number(cam_block, "focal_length", focal);
-    ok &= extract_number(cam_block, "sensor_width", sensor_w);
-    ok &= extract_number(cam_block, "sensor_height", sensor_h);
-    ok &= parse_vec2i_block(cam_block, "film_resolution", resx, resy);
+    {
+        double x=0,y=0,z=0; ok &= util_json::parse_vec3(cam_block, "location", x, y, z); location = Vec3(x,y,z);
+    }
+    {
+        double x=0,y=0,z=0; ok &= util_json::parse_vec3(cam_block, "direction", x, y, z); direction = Vec3(x,y,z);
+    }
+    ok &= util_json::parse_number(cam_block, "focal_length", focal);
+    ok &= util_json::parse_number(cam_block, "sensor_width", sensor_w);
+    ok &= util_json::parse_number(cam_block, "sensor_height", sensor_h);
+    ok &= util_json::parse_vec2i(cam_block, "film_resolution", resx, resy);
     if (!ok) return false;
 
     camera.setFocalLength(focal);
