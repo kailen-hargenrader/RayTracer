@@ -1,17 +1,17 @@
 CXX=cl
 CXXFLAGS=/nologo /EHsc /std:c++17
 
-all: image.obj persp_camera.obj mesh.obj
+all: persp_camera.obj mesh.obj utils.obj
 
-image.obj: image.cpp image.h
-	$(CXX) $(CXXFLAGS) /c image.cpp /Fo:image.obj
-
-persp_camera.obj: persp_camera.cpp persp_camera.h
+persp_camera.obj: persp_camera.cpp persp_camera.h utils.h
 	$(CXX) $(CXXFLAGS) /c persp_camera.cpp /Fo:persp_camera.obj
 
-mesh.obj: mesh.cpp mesh.h
+mesh.obj: mesh.cpp mesh.h utils.h
 	$(CXX) $(CXXFLAGS) /c mesh.cpp /Fo:mesh.obj
 
+utils.obj: utils.cpp utils.h
+	$(CXX) $(CXXFLAGS) /c utils.cpp /Fo:utils.obj
+
 clean:
-	-del /Q image.obj camera.obj persp_camera.obj mesh.obj 2>NUL
+	-del /Q camera.obj persp_camera.obj mesh.obj utils.obj 2>NUL
 
