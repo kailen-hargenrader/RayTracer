@@ -36,10 +36,7 @@ def mesh_handler(mesh_dict, mesh_obj):
             "yaw": float(eul.z),
         }
         scale_vec = mw.to_scale()
-        # Export a single scalar (1D) scale. If non-uniform, use the average and warn.
-        if abs(scale_vec.x - scale_vec.y) > 1e-6 or abs(scale_vec.y - scale_vec.z) > 1e-6:
-            warnings.warn("Non-uniform scale on cube; exporting average as 1D scale")
-        scale = float((scale_vec.x + scale_vec.y + scale_vec.z) / 3.0)
+        scale = vec3_to_dict(scale_vec)
 
         cube_params = {
             "translation": translation,
@@ -57,23 +54,13 @@ def mesh_handler(mesh_dict, mesh_obj):
             "yaw": float(eul.z),
         }
         scale_vec = mw.to_scale()
-        # Derive radius from X/Y scales (assumes unit-radius cylinder in local space)
-        if abs(scale_vec.x - scale_vec.y) > 1e-6:
-            warnings.warn("Non-uniform XY scale on cylinder; exporting average as radius")
-        radius = float((scale_vec.x + scale_vec.y) / 2.0)
-        # Derive length from Z scale (assumes depth 2 in local space)
-        length = float(2.0 * scale_vec.z)
-        # Export a single scalar (1D) scale for overall size, mirroring cubes
-        if abs(scale_vec.x - scale_vec.y) > 1e-6 or abs(scale_vec.y - scale_vec.z) > 1e-6:
-            warnings.warn("Non-uniform scale on cylinder; exporting average as 1D scale")
-        scale = float((scale_vec.x + scale_vec.y + scale_vec.z) / 3.0)
+        # Export full 3D scale vector only; consumers can derive radius/length if needed
+        scale = vec3_to_dict(scale_vec)
 
         cylinder_params = {
             "translation": translation,
             "rotation": rotation,
             "scale": scale,
-            "radius": radius,
-            "length": length,
         }
         cylinder_dict[id_gen.get_id()] = cylinder_params
     def sphere_handler(sphere_dict, sphere_obj):
@@ -81,12 +68,11 @@ def mesh_handler(mesh_dict, mesh_obj):
         location = list(mw.to_translation())
         scale_vec = mw.to_scale()
         if abs(scale_vec.x - scale_vec.y) > 1e-6 or abs(scale_vec.y - scale_vec.z) > 1e-6:
-            warnings.warn("Non-uniform scale on sphere; exporting average as radius")
-        radius = float((scale_vec.x + scale_vec.y + scale_vec.z) / 3.0)
+            warnings.warn("Non-uniform scale on sphere; exporting non-uniform scale vector")
 
         sphere_params = {
             "location": vec3_to_dict(location),
-            "radius": radius,
+            "scale": vec3_to_dict(scale_vec),
         }
         sphere_dict[id_gen.get_id()] = sphere_params
     def plane_handler(plane_dict, plane_obj):

@@ -26,16 +26,16 @@ def dict3_to_tuple(d):
 data = {
 	"MESH": {
 		"Cube": {
-			"1": {"translation": vec3(-2.0, 1.5, 0.5), "rotation": {"roll": 0.25, "pitch": 0.5, "yaw": 0.75}, "scale": 1.0},
-			"2": {"translation": vec3(3.0, -1.0, 1.0), "rotation": {"roll": 1.1, "pitch": 0.2, "yaw": 0.0}, "scale": 0.65},
-			"3": {"translation": vec3(0.0, 3.0, 2.0), "rotation": {"roll": 0.0, "pitch": 0.9, "yaw": 1.2}, "scale": 1.8},
-			"4": {"translation": vec3(-3.5, -2.0, 0.2), "rotation": {"roll": 0.4, "pitch": 0.8, "yaw": 0.1}, "scale": 1.25},
+			"1": {"translation": vec3(-2.0, 1.5, 0.5), "rotation": {"roll": 0.25, "pitch": 0.5, "yaw": 0.75}, "scale": vec3(1.4, 1.0, 1.0)},
+			"2": {"translation": vec3(3.0, -1.0, 1.0), "rotation": {"roll": 1.1, "pitch": 0.2, "yaw": 0.0}, "scale": vec3(0.65, 0.65, 0.65)},
+			"3": {"translation": vec3(0.0, 3.0, 2.0), "rotation": {"roll": 0.0, "pitch": 0.9, "yaw": 1.2}, "scale": vec3(1.8, 1.8, 1.8)},
+			"4": {"translation": vec3(-3.5, -2.0, 0.2), "rotation": {"roll": 0.4, "pitch": 0.8, "yaw": 0.1}, "scale": vec3(1.25, 1.5, 1.25)},
 		},
 		"Sphere": {
-			"1": {"location": vec3(1.0, 1.0, 1.0), "radius": 1.0},
-			"2": {"location": vec3(-1.5, 2.5, 0.5), "radius": 0.6},
-			"3": {"location": vec3(2.0, -2.5, 1.5), "radius": 1.4},
-			"4": {"location": vec3(-2.0, -1.0, 2.0), "radius": 0.9},
+			"1": {"location": vec3(1.0, 1.0, 1.0), "scale": vec3(1.0, 1.0, 1.0)},
+			"2": {"location": vec3(-1.5, 2.5, 0.5), "scale": vec3(0.8, 0.6, 0.6)},
+			"3": {"location": vec3(2.0, -2.5, 1.5), "scale": vec3(1.4, 1.4, 1.4)},
+			"4": {"location": vec3(-2.0, -1.0, 2.0), "scale": vec3(0.9, 0.6, 0.9)},
 		},
 		"Plane": {
 			"1": {"corners": [vec3(-2, -2, 0), vec3(2, -2, 0), vec3(2, 2, 0), vec3(-2, 2, 0)]},
@@ -85,21 +85,21 @@ def load_from_json(path="random.json"):
 	for _id, p in data.get("MESH", {}).get("Cube", {}).items():
 		trans = dict3_to_tuple(p.get("translation", {}))
 		rot = p.get("rotation", {"roll": 0.0, "pitch": 0.0, "yaw": 0.0})
-		scale = float(p.get("scale", 1.0))
+		scale_v = dict3_to_tuple(p.get("scale", {}))
 		bpy.ops.mesh.primitive_cube_add()
 		obj = bpy.context.active_object
 		obj.location = trans
 		obj.rotation_euler = (float(rot.get("roll", 0.0)), float(rot.get("pitch", 0.0)), float(rot.get("yaw", 0.0)))
-		obj.scale = (scale, scale, scale)
+		obj.scale = scale_v
 
 	# Load spheres
 	for _id, p in data.get("MESH", {}).get("Sphere", {}).items():
 		loc = dict3_to_tuple(p.get("location", {}))
-		radius = float(p.get("radius", 1.0))
+		scale_v = dict3_to_tuple(p.get("scale", {}))
 		bpy.ops.mesh.primitive_uv_sphere_add()
 		obj = bpy.context.active_object
 		obj.location = loc
-		obj.scale = (radius, radius, radius)
+		obj.scale = scale_v
 
 	# Load planes
 	planes = data.get("MESH", {}).get("Plane", {})
