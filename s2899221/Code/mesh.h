@@ -8,6 +8,7 @@
 // Forward declarations to avoid including full headers here
 class Hit;
 class Ray;
+struct Float3; // forward declare for Mesh::compute_aabb
 
 /** Base class for all mesh types. */
 class Mesh {
@@ -19,6 +20,12 @@ public:
 
     /** Intersect this mesh with a ray; populate Hit on success. */
     virtual bool intersect(const Ray& ray, Hit& hit) const { return false; }
+
+    /** Compute an axis-aligned bounding box in world coordinates for this mesh. */
+    virtual void compute_aabb(Float3& outMin, Float3& outMax) const = 0;
+
+    /** Return this as a BoundingBox if applicable, else nullptr (avoids RTTI cost). */
+    virtual const class BoundingBox* asBoundingBox() const { return nullptr; }
 };
 
 /** Simple 3D point/vector container used by mesh shapes. */
@@ -46,6 +53,8 @@ public:
 
     bool intersect(const Ray& ray, Hit& hit) const override;
 
+    void compute_aabb(Float3& outMin, Float3& outMax) const override;
+
 private:
     Float3 m_translation;
     EulerAngles m_rotation;
@@ -64,6 +73,8 @@ public:
     static std::vector<Cylinder> read_from_json(const std::string& class_block);
     void write_to_console(std::ostream& out) const override;
     bool intersect(const Ray& ray, Hit& hit) const override;
+
+    void compute_aabb(Float3& outMin, Float3& outMax) const override;
 
 private:
     Float3 m_translation;
@@ -84,6 +95,8 @@ public:
     void write_to_console(std::ostream& out) const override;
     bool intersect(const Ray& ray, Hit& hit) const override;
 
+    void compute_aabb(Float3& outMin, Float3& outMax) const override;
+
 private:
     Float3 m_location;
     Float3 m_scale; // per-axis
@@ -99,8 +112,37 @@ public:
     void write_to_console(std::ostream& out) const override;
     bool intersect(const Ray& ray, Hit& hit) const override;
 
+    void compute_aabb(Float3& outMin, Float3& outMax) const override;
+
 private:
     std::vector<Float3> m_corners; // expected size 4
+};
+
+/** Axis-aligned bounding box mesh used as internal nodes in BVH. */
+class BoundingBox : public Mesh {
+public:
+    BoundingBox();
+    BoundingBox(const Float3& bmin, const Float3& bmax);
+
+    void write_to_console(std::ostream& out) const override;
+    bool intersect(const Ray& ray, Hit& hit) const override;
+    void compute_aabb(Float3& outMin, Float3& outMax) const override;
+
+    const BoundingBox* asBoundingBox() const override { return this; }
+
+    void setChildren(const Mesh* left, const Mesh* right);
+    const Mesh* getLeft() const;
+    const Mesh* getRight() const;
+
+    const Float3& getMin() const;
+    const Float3& getMax() const;
+    void setBounds(const Float3& bmin, const Float3& bmax);
+
+private:
+    Float3 m_min;
+    Float3 m_max;
+    const Mesh* m_left;
+    const Mesh* m_right;
 };
 
 #endif // MESH_H

@@ -7,6 +7,7 @@
 #include <regex>
 #include <cmath>
 #include <limits>
+#include <algorithm>
 
 // JSON-like parsing helpers are implemented in utils.{h,cpp}
 
@@ -195,6 +196,35 @@ bool Cube::intersect(const Ray& ray, Hit& hit) const {
     return true;
 }
 
+static inline void aabb_expand(Float3& bmin, Float3& bmax, const double p[3]) {
+    if (p[0] < bmin.x) bmin.x = p[0]; if (p[1] < bmin.y) bmin.y = p[1]; if (p[2] < bmin.z) bmin.z = p[2];
+    if (p[0] > bmax.x) bmax.x = p[0]; if (p[1] > bmax.y) bmax.y = p[1]; if (p[2] > bmax.z) bmax.z = p[2];
+}
+
+// Compute tight world AABB for transformed cube by transforming its 8 corners
+void Cube::compute_aabb(Float3& outMin, Float3& outMax) const {
+    double R[3][3];
+    build_rotation_matrix_rpy(m_rotation.roll, m_rotation.pitch, m_rotation.yaw, R);
+    auto transform_point = [&](double lx, double ly, double lz, double out[3]) {
+        double p_scaled[3] = { lx * m_scale.x, ly * m_scale.y, lz * m_scale.z };
+        double p_rot[3]; mul_mat_vec(R, p_scaled, p_rot);
+        out[0] = p_rot[0] + m_translation.x;
+        out[1] = p_rot[1] + m_translation.y;
+        out[2] = p_rot[2] + m_translation.z;
+    };
+    outMin = { +std::numeric_limits<double>::infinity(), +std::numeric_limits<double>::infinity(), +std::numeric_limits<double>::infinity() };
+    outMax = { -std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity() };
+    for (int dx = -1; dx <= 1; dx += 2) {
+        for (int dy = -1; dy <= 1; dy += 2) {
+            for (int dz = -1; dz <= 1; dz += 2) {
+                double pw[3];
+                transform_point(static_cast<double>(dx), static_cast<double>(dy), static_cast<double>(dz), pw);
+                aabb_expand(outMin, outMax, pw);
+            }
+        }
+    }
+}
+
 // ---------- Cylinder ----------
 Cylinder::Cylinder() : m_translation{0,0,0}, m_rotation{0,0,0}, m_scale{1.0,1.0,1.0} {}
 Cylinder::Cylinder(const Float3& translation, const EulerAngles& rotation, const Float3& scale)
@@ -354,6 +384,30 @@ bool Cylinder::intersect(const Ray& ray, Hit& hit) const {
     return true;
 }
 
+// Conservative AABB via transforming the 8 corners of local cube [-1,1]^3
+void Cylinder::compute_aabb(Float3& outMin, Float3& outMax) const {
+    double R[3][3];
+    build_rotation_matrix_rpy(m_rotation.roll, m_rotation.pitch, m_rotation.yaw, R);
+    auto transform_point = [&](double lx, double ly, double lz, double out[3]) {
+        double p_scaled[3] = { lx * m_scale.x, ly * m_scale.y, lz * m_scale.z };
+        double p_rot[3]; mul_mat_vec(R, p_scaled, p_rot);
+        out[0] = p_rot[0] + m_translation.x;
+        out[1] = p_rot[1] + m_translation.y;
+        out[2] = p_rot[2] + m_translation.z;
+    };
+    outMin = { +std::numeric_limits<double>::infinity(), +std::numeric_limits<double>::infinity(), +std::numeric_limits<double>::infinity() };
+    outMax = { -std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity() };
+    for (int dx = -1; dx <= 1; dx += 2) {
+        for (int dy = -1; dy <= 1; dy += 2) {
+            for (int dz = -1; dz <= 1; dz += 2) {
+                double pw[3];
+                transform_point(static_cast<double>(dx), static_cast<double>(dy), static_cast<double>(dz), pw);
+                aabb_expand(outMin, outMax, pw);
+            }
+        }
+    }
+}
+
 // ---------- Sphere ----------
 Sphere::Sphere() : m_location{0,0,0}, m_scale{1.0,1.0,1.0} {}
 Sphere::Sphere(const Float3& location, const Float3& scale) : m_location(location), m_scale(scale) {}
@@ -455,6 +509,26 @@ bool Sphere::intersect(const Ray& ray, Hit& hit) const {
                                               : std::sqrt(dx*dx + dy*dy + dz*dz);
     hit.setDistanceAlongRay(dist_world);
     return true;
+}
+
+void Sphere::compute_aabb(Float3& outMin, Float3& outMax) const {
+    // Transform local cube [-1,1]^3 by non-uniform scale and translation
+    outMin = { +std::numeric_limits<double>::infinity(), +std::numeric_limits<double>::infinity(), +std::numeric_limits<double>::infinity() };
+    outMax = { -std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity() };
+    auto transform_point = [&](double lx, double ly, double lz, double out[3]) {
+        out[0] = m_location.x + lx * m_scale.x;
+        out[1] = m_location.y + ly * m_scale.y;
+        out[2] = m_location.z + lz * m_scale.z;
+    };
+    for (int dx = -1; dx <= 1; dx += 2) {
+        for (int dy = -1; dy <= 1; dy += 2) {
+            for (int dz = -1; dz <= 1; dz += 2) {
+                double pw[3];
+                transform_point(static_cast<double>(dx), static_cast<double>(dy), static_cast<double>(dz), pw);
+                aabb_expand(outMin, outMax, pw);
+            }
+        }
+    }
 }
 
 // ---------- Plane ----------
@@ -644,4 +718,61 @@ bool Plane::intersect(const Ray& ray, Hit& hit) const {
     hit.setDistanceAlongRay(dist_world);
     return true;
 }
+
+void Plane::compute_aabb(Float3& outMin, Float3& outMax) const {
+    if (m_corners.empty()) { outMin = {0,0,0}; outMax = {0,0,0}; return; }
+    outMin = { +std::numeric_limits<double>::infinity(), +std::numeric_limits<double>::infinity(), +std::numeric_limits<double>::infinity() };
+    outMax = { -std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity() };
+    for (const auto& c : m_corners) {
+        double p[3] = { c.x, c.y, c.z };
+        aabb_expand(outMin, outMax, p);
+    }
+}
+
+// ---------- BoundingBox ----------
+
+BoundingBox::BoundingBox() : m_min{0,0,0}, m_max{0,0,0}, m_left(nullptr), m_right(nullptr) {}
+BoundingBox::BoundingBox(const Float3& bmin, const Float3& bmax) : m_min(bmin), m_max(bmax), m_left(nullptr), m_right(nullptr) {}
+
+void BoundingBox::write_to_console(std::ostream& out) const {
+    out << "BoundingBox(min=[" << m_min.x << ", " << m_min.y << ", " << m_min.z
+        << "], max=[" << m_max.x << ", " << m_max.y << ", " << m_max.z << "])\n";
+}
+
+bool BoundingBox::intersect(const Ray& ray, Hit& hit) const {
+    const RayVec3 ro = ray.getPosition();
+    const RayVec3 rd = ray.getDirection();
+    const double eps = 1e-12;
+    double tmin = -std::numeric_limits<double>::infinity();
+    double tmax =  std::numeric_limits<double>::infinity();
+    auto slab = [&](double o, double d, double lo, double hi) {
+        if (std::abs(d) < eps) {
+            if (o < lo || o > hi) return false;
+            return true;
+        }
+        double t1 = (lo - o) / d;
+        double t2 = (hi - o) / d;
+        if (t1 > t2) std::swap(t1, t2);
+        if (t1 > tmin) tmin = t1;
+        if (t2 < tmax) tmax = t2;
+        return tmin <= tmax;
+    };
+    if (!slab(ro.x, rd.x, m_min.x, m_max.x)) return false;
+    if (!slab(ro.y, rd.y, m_min.y, m_max.y)) return false;
+    if (!slab(ro.z, rd.z, m_min.z, m_max.z)) return false;
+    if (tmax < 0.0) return false;
+    const double t_hit = (tmin >= 0.0) ? tmin : tmax;
+    hit.setDistanceAlongRay(t_hit);
+    return true;
+}
+
+void BoundingBox::compute_aabb(Float3& outMin, Float3& outMax) const { outMin = m_min; outMax = m_max; }
+
+void BoundingBox::setChildren(const Mesh* left, const Mesh* right) { m_left = left; m_right = right; }
+const Mesh* BoundingBox::getLeft() const { return m_left; }
+const Mesh* BoundingBox::getRight() const { return m_right; }
+const Float3& BoundingBox::getMin() const { return m_min; }
+const Float3& BoundingBox::getMax() const { return m_max; }
+void BoundingBox::setBounds(const Float3& bmin, const Float3& bmax) { m_min = bmin; m_max = bmax; }
+
 
