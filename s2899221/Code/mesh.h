@@ -91,6 +91,7 @@ public:
 
     static std::vector<Plane> read_from_json(const std::string& class_block);
     void write_to_console(std::ostream& out) const override;
+    bool intersect(const Ray& ray, Hit& hit) const override;
 
 private:
     std::vector<Float3> m_corners; // expected size 4

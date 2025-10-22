@@ -319,3 +319,128 @@ void Plane::write_to_console(std::ostream& out) const {
 }
 
 
+bool Plane::intersect(const Ray& ray, Hit& hit) const {
+    if (m_corners.size() < 4) return false;
+
+    // Build local basis from corners: P(u,v,w) = P0 + u*e1 + v*e2 + w*n, with plane at w=0
+    const Float3& P0 = m_corners[0];
+    const Float3& P1 = m_corners[1];
+    const Float3& P3 = m_corners[3];
+
+    const double e1[3] = { P1.x - P0.x, P1.y - P0.y, P1.z - P0.z };
+    const double e2[3] = { P3.x - P0.x, P3.y - P0.y, P3.z - P0.z };
+
+    auto cross3 = [](const double a[3], const double b[3], double out[3]) {
+        out[0] = a[1]*b[2] - a[2]*b[1];
+        out[1] = a[2]*b[0] - a[0]*b[2];
+        out[2] = a[0]*b[1] - a[1]*b[0];
+    };
+    auto dot3 = [](const double a[3], const double b[3]) -> double {
+        return a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
+    };
+
+    double n_col[3];
+    cross3(e1, e2, n_col);
+    const double n_len = std::sqrt(n_col[0]*n_col[0] + n_col[1]*n_col[1] + n_col[2]*n_col[2]);
+    if (n_len < 1e-15) return false; // degenerate
+    const double n_unit[3] = { n_col[0]/n_len, n_col[1]/n_len, n_col[2]/n_len };
+
+    // Matrix M = [e1 e2 n] and its inverse to transform world -> local
+    const double M[3][3] = {
+        { e1[0], e2[0], n_unit[0] },
+        { e1[1], e2[1], n_unit[1] },
+        { e1[2], e2[2], n_unit[2] }
+    };
+
+    auto det3 = [&](const double A[3][3]) -> double {
+        return A[0][0]*(A[1][1]*A[2][2] - A[1][2]*A[2][1])
+             - A[0][1]*(A[1][0]*A[2][2] - A[1][2]*A[2][0])
+             + A[0][2]*(A[1][0]*A[2][1] - A[1][1]*A[2][0]);
+    };
+    const double detM = det3(M);
+    if (std::abs(detM) < 1e-15) return false;
+    const double invDet = 1.0 / detM;
+
+    double Minv[3][3];
+    // Adjugate (cofactor transpose) divided by det
+    Minv[0][0] =  (M[1][1]*M[2][2] - M[1][2]*M[2][1]) * invDet;
+    Minv[0][1] = -(M[0][1]*M[2][2] - M[0][2]*M[2][1]) * invDet;
+    Minv[0][2] =  (M[0][1]*M[1][2] - M[0][2]*M[1][1]) * invDet;
+    Minv[1][0] = -(M[1][0]*M[2][2] - M[1][2]*M[2][0]) * invDet;
+    Minv[1][1] =  (M[0][0]*M[2][2] - M[0][2]*M[2][0]) * invDet;
+    Minv[1][2] = -(M[0][0]*M[1][2] - M[0][2]*M[1][0]) * invDet;
+    Minv[2][0] =  (M[1][0]*M[2][1] - M[1][1]*M[2][0]) * invDet;
+    Minv[2][1] = -(M[0][0]*M[2][1] - M[0][1]*M[2][0]) * invDet;
+    Minv[2][2] =  (M[0][0]*M[1][1] - M[0][1]*M[1][0]) * invDet;
+
+    auto mul3 = [](const double A[3][3], const double v[3], double out[3]) {
+        out[0] = A[0][0]*v[0] + A[0][1]*v[1] + A[0][2]*v[2];
+        out[1] = A[1][0]*v[0] + A[1][1]*v[1] + A[1][2]*v[2];
+        out[2] = A[2][0]*v[0] + A[2][1]*v[1] + A[2][2]*v[2];
+    };
+
+    // World ray
+    const RayVec3 ro_w = ray.getPosition();
+    const RayVec3 rd_w = ray.getDirection();
+
+    // Transform to local coordinates of the plane
+    const double ro_rel[3] = { ro_w.x - P0.x, ro_w.y - P0.y, ro_w.z - P0.z };
+    double ro_l[3]; mul3(Minv, ro_rel, ro_l);
+    const double rd_in[3] = { rd_w.x, rd_w.y, rd_w.z };
+    double rd_l[3]; mul3(Minv, rd_in, rd_l);
+
+    // Intersect local plane w-axis is z, plane is z=0
+    const double eps = 1e-12;
+    if (std::abs(rd_l[2]) < eps) {
+        if (std::abs(ro_l[2]) >= eps) return false; // parallel and not on plane
+        return false; // treat as no unique intersection
+    }
+
+    const double t_hit = -ro_l[2] / rd_l[2];
+    if (t_hit < 0.0) return false;
+
+    const double u = ro_l[0] + t_hit * rd_l[0];
+    const double v = ro_l[1] + t_hit * rd_l[1];
+
+    // Inside quad if 0<=u<=1 and 0<=v<=1 (with small epsilon tolerance)
+    if (u < -eps || u > 1.0 + eps || v < -eps || v > 1.0 + eps) return false;
+
+    // Local intersection point
+    const double p_l[3] = { u, v, 0.0 };
+
+    // Transform back to world: p_w = P0 + M * p_l
+    double p_w_rel[3]; mul3(M, p_l, p_w_rel);
+    double p_world[3] = { P0.x + p_w_rel[0], P0.y + p_w_rel[1], P0.z + p_w_rel[2] };
+
+    // World-space normal (already unit length)
+    const double n_world[3] = { n_unit[0], n_unit[1], n_unit[2] };
+
+    // Reflected direction in world space
+    const double d_world[3] = { rd_w.x, rd_w.y, rd_w.z };
+    const double d_dot_n = dot3(d_world, n_world);
+    double r_world_tmp[3] = { d_world[0] - 2.0 * d_dot_n * n_world[0],
+                              d_world[1] - 2.0 * d_dot_n * n_world[1],
+                              d_world[2] - 2.0 * d_dot_n * n_world[2] };
+    double r_len = std::sqrt(r_world_tmp[0]*r_world_tmp[0] + r_world_tmp[1]*r_world_tmp[1] + r_world_tmp[2]*r_world_tmp[2]);
+    if (r_len < 1e-15) r_len = 1.0;
+    double r_world[3] = { r_world_tmp[0]/r_len, r_world_tmp[1]/r_len, r_world_tmp[2]/r_len };
+
+    // Populate Hit
+    HitVec3 ip{ p_world[0], p_world[1], p_world[2] };
+    HitVec3 nrm{ n_world[0], n_world[1], n_world[2] };
+    HitVec3 refl{ r_world[0], r_world[1], r_world[2] };
+
+    hit.setIntersectionPoint(ip);
+    hit.setSurfaceNormal(nrm);
+    hit.setReflectedDirection(refl);
+
+    const double dx = p_world[0] - ro_w.x;
+    const double dy = p_world[1] - ro_w.y;
+    const double dz = p_world[2] - ro_w.z;
+    const double d_len = std::sqrt(d_world[0]*d_world[0] + d_world[1]*d_world[1] + d_world[2]*d_world[2]);
+    const double dist_world = (d_len > 1e-15) ? (dx*d_world[0] + dy*d_world[1] + dz*d_world[2]) / d_len
+                                              : std::sqrt(dx*dx + dy*dy + dz*dz);
+    hit.setDistanceAlongRay(dist_world);
+    return true;
+}
+

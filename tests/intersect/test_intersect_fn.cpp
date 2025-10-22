@@ -113,6 +113,11 @@ int main(int argc, char** argv) {
 
     std::vector<Cube> cubes; std::vector<Plane> planes;
     read_meshes(content, cubes, planes);
+    // Unified mesh list for polymorphic intersect testing
+    std::vector<const Mesh*> scene;
+    scene.reserve(cubes.size() + planes.size());
+    for (const auto& c : cubes) scene.push_back(&c);
+    for (const auto& p : planes) scene.push_back(&p);
 
     std::ofstream out(out_path);
     if (!out) { std::cerr << "Failed to open output: " << out_path << "\n"; return 1; }
@@ -130,15 +135,14 @@ int main(int argc, char** argv) {
         double best_dist = 1e300;
         Hit best_hit;
 
-        // Intersect cubes
-        for (const auto& c : cubes) {
+        // Intersect all meshes uniformly
+        for (const Mesh* m : scene) {
             Hit h;
-            if (c.intersect(ray, h) && h.hasDistanceAlongRay()) {
+            if (m->intersect(ray, h) && h.hasDistanceAlongRay()) {
                 const double dist = h.getDistanceAlongRay();
                 if (dist < best_dist) { best_dist = dist; best_hit = h; any_hit = true; }
             }
         }
-        // TODO: planes intersect when Plane::intersect is implemented
 
         if (any_hit && best_dist <= max_len) {
             const auto& ip = best_hit.getIntersectionPoint();
