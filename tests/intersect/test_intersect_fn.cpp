@@ -95,12 +95,13 @@ static void pixel_to_ray(const CameraCfg& cam, double px, double py, RayVec3& or
 
 int main(int argc, char** argv) {
     if (argc < 3) {
-        std::cerr << "Usage: test_intersect_fn <path-to-json> <num-rays> [out.txt]\n";
+        std::cerr << "Usage: test_intersect_fn <path-to-json> <num-rays> [out.txt] [max_length]\n";
         return 1;
     }
     const std::string json_path = argv[1];
     const int num_rays = std::max(1, std::atoi(argv[2]));
     const std::string out_path = (argc >= 4) ? argv[3] : std::string("intersections.txt");
+    const double max_len = (argc >= 5) ? std::max(0.0, std::atof(argv[4])) : 8.0;
 
     std::ifstream in(json_path);
     if (!in) { std::cerr << "Failed to open JSON: " << json_path << "\n"; return 1; }
@@ -139,17 +140,19 @@ int main(int argc, char** argv) {
         }
         // TODO: planes intersect when Plane::intersect is implemented
 
-        if (any_hit) {
+        if (any_hit && best_dist <= max_len) {
             const auto& ip = best_hit.getIntersectionPoint();
-            // Output ray segment from origin to hit
+            // Output ray segment from origin to hit (length = best_dist)
             out << o.x << ' ' << o.y << ' ' << o.z << ' ' << (ip.x - o.x) << ' ' << (ip.y - o.y) << ' ' << (ip.z - o.z) << ' ' << best_dist << '\n';
-            // Output reflection ray (unit reflectedDirection, length equals best_dist for visibility)
-            const auto& refl = best_hit.getReflectedDirection();
-            out << ip.x << ' ' << ip.y << ' ' << ip.z << ' ' << refl.x << ' ' << refl.y << ' ' << refl.z << ' ' << best_dist << '\n';
+            // Output reflection ray with remaining length (max_len - best_dist)
+            const double remain = std::max(0.0, max_len - best_dist);
+            if (remain > 0.0) {
+                const auto& refl = best_hit.getReflectedDirection();
+                out << ip.x << ' ' << ip.y << ' ' << ip.z << ' ' << refl.x << ' ' << refl.y << ' ' << refl.z << ' ' << remain << '\n';
+            }
         } else {
-            // Output primary ray with fixed length when no hit
-            const double L = 5.0;
-            out << o.x << ' ' << o.y << ' ' << o.z << ' ' << d.x << ' ' << d.y << ' ' << d.z << ' ' << L << '\n';
+            // No hit within max_len: output primary ray capped at max_len and no reflection
+            out << o.x << ' ' << o.y << ' ' << o.z << ' ' << d.x << ' ' << d.y << ' ' << d.z << ' ' << max_len << '\n';
         }
     }
 
