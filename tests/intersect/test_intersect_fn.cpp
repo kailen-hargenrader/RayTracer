@@ -43,13 +43,19 @@ static bool read_first_camera(const std::string& content, CameraCfg& out) {
     return true;
 }
 
-static bool read_meshes(const std::string& content, std::vector<Cube>& cubes, std::vector<Plane>& planes) {
+static bool read_meshes(const std::string& content, std::vector<Cube>& cubes, std::vector<Plane>& planes, std::vector<Cylinder>& cylinders, std::vector<Sphere>& spheres) {
     std::string mesh_block; if (!util_json::extract_object_block(content, "MESH", mesh_block)) return false;
     std::string cube_block; if (util_json::extract_object_block(mesh_block, "Cube", cube_block)) {
         auto v = Cube::read_from_json(cube_block); cubes.insert(cubes.end(), v.begin(), v.end());
     }
     std::string plane_block; if (util_json::extract_object_block(mesh_block, "Plane", plane_block)) {
         auto v = Plane::read_from_json(plane_block); planes.insert(planes.end(), v.begin(), v.end());
+    }
+    std::string cyl_block; if (util_json::extract_object_block(mesh_block, "Cylinder", cyl_block)) {
+        auto v = Cylinder::read_from_json(cyl_block); cylinders.insert(cylinders.end(), v.begin(), v.end());
+    }
+    std::string sph_block; if (util_json::extract_object_block(mesh_block, "Sphere", sph_block)) {
+        auto v = Sphere::read_from_json(sph_block); spheres.insert(spheres.end(), v.begin(), v.end());
     }
     return true;
 }
@@ -111,13 +117,15 @@ int main(int argc, char** argv) {
     CameraCfg cam{};
     if (!read_first_camera(content, cam)) { std::cerr << "Failed to read camera from JSON\n"; return 1; }
 
-    std::vector<Cube> cubes; std::vector<Plane> planes;
-    read_meshes(content, cubes, planes);
+    std::vector<Cube> cubes; std::vector<Plane> planes; std::vector<Cylinder> cylinders; std::vector<Sphere> spheres;
+    read_meshes(content, cubes, planes, cylinders, spheres);
     // Unified mesh list for polymorphic intersect testing
     std::vector<const Mesh*> scene;
-    scene.reserve(cubes.size() + planes.size());
+    scene.reserve(cubes.size() + planes.size() + cylinders.size() + spheres.size());
     for (const auto& c : cubes) scene.push_back(&c);
     for (const auto& p : planes) scene.push_back(&p);
+    for (const auto& cy : cylinders) scene.push_back(&cy);
+    for (const auto& s : spheres) scene.push_back(&s);
 
     std::ofstream out(out_path);
     if (!out) { std::cerr << "Failed to open output: " << out_path << "\n"; return 1; }

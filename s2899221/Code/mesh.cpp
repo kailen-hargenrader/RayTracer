@@ -196,9 +196,9 @@ bool Cube::intersect(const Ray& ray, Hit& hit) const {
 }
 
 // ---------- Cylinder ----------
-Cylinder::Cylinder() : m_translation{0,0,0}, m_rotation{0,0,0}, m_scale(1.0), m_radius(1.0), m_length(1.0) {}
-Cylinder::Cylinder(const Float3& translation, const EulerAngles& rotation, double scale, double radius, double length)
-    : m_translation(translation), m_rotation(rotation), m_scale(scale), m_radius(radius), m_length(length) {}
+Cylinder::Cylinder() : m_translation{0,0,0}, m_rotation{0,0,0}, m_scale{1.0,1.0,1.0} {}
+Cylinder::Cylinder(const Float3& translation, const EulerAngles& rotation, const Float3& scale)
+    : m_translation(translation), m_rotation(rotation), m_scale(scale) {}
 
 std::vector<Cylinder> Cylinder::read_from_json(const std::string& class_block) {
     std::vector<Cylinder> result;
@@ -210,15 +210,12 @@ std::vector<Cylinder> Cylinder::read_from_json(const std::string& class_block) {
         std::string tail = class_block.substr(key_pos);
         std::string sub; if (!util_json::extract_object_block(tail, it->str(1), sub)) continue;
 
-        Float3 tr{0,0,0}; EulerAngles rot{0,0,0}; double scale = 1.0; double radius = 1.0; double length = 1.0;
+        Float3 tr{0,0,0}; EulerAngles rot{0,0,0}; Float3 scale{1.0,1.0,1.0};
         { double x=0,y=0,z=0; if (util_json::parse_vec3(sub, "translation", x, y, z)) tr = Float3{ x, y, z }; }
-        double r=0,p=0,y=0; util_json::parse_number(sub, "roll", r); util_json::parse_number(sub, "pitch", p); util_json::parse_number(sub, "yaw", y);
-        rot = EulerAngles{ r, p, y };
-        util_json::parse_number(sub, "scale", scale);
-        util_json::parse_number(sub, "radius", radius);
-        util_json::parse_number(sub, "length", length);
-
-        result.emplace_back(tr, rot, scale, radius, length);
+        double rr=0,pp=0,yy=0; util_json::parse_number(sub, "roll", rr); util_json::parse_number(sub, "pitch", pp); util_json::parse_number(sub, "yaw", yy);
+        rot = EulerAngles{ rr, pp, yy };
+        { double sx=1,sy=1,sz=1; if (util_json::parse_vec3(sub, "scale", sx, sy, sz)) scale = Float3{ sx, sy, sz }; }
+        result.emplace_back(tr, rot, scale);
     }
     return result;
 }
@@ -226,12 +223,140 @@ std::vector<Cylinder> Cylinder::read_from_json(const std::string& class_block) {
 void Cylinder::write_to_console(std::ostream& out) const {
     out << "Cylinder(translation=[" << m_translation.x << ", " << m_translation.y << ", " << m_translation.z
         << "], rotation(rpy)=[" << m_rotation.roll << ", " << m_rotation.pitch << ", " << m_rotation.yaw
-        << "], scale=" << m_scale << ", radius=" << m_radius << ", length=" << m_length << ")\n";
+        << "], scale=[" << m_scale.x << ", " << m_scale.y << ", " << m_scale.z << "])\n";
+}
+
+bool Cylinder::intersect(const Ray& ray, Hit& hit) const {
+    // Build rotation matrix
+    double R[3][3];
+    build_rotation_matrix_rpy(m_rotation.roll, m_rotation.pitch, m_rotation.yaw, R);
+    double RT[3][3];
+    transpose3(R, RT);
+
+    // World ray
+    const RayVec3 ro_w = ray.getPosition();
+    const RayVec3 rd_w = ray.getDirection();
+
+    // Transform to local coordinates (non-uniform scale)
+    const double to_obj[3] = { ro_w.x - m_translation.x, ro_w.y - m_translation.y, ro_w.z - m_translation.z };
+    double ro_r[3]; mul_mat_vec(RT, to_obj, ro_r);
+    double rd_in[3] = { rd_w.x, rd_w.y, rd_w.z };
+    double rd_r[3]; mul_mat_vec(RT, rd_in, rd_r);
+
+    const double invSx = (m_scale.x != 0.0) ? (1.0 / m_scale.x) : 0.0;
+    const double invSy = (m_scale.y != 0.0) ? (1.0 / m_scale.y) : 0.0;
+    const double invSz = (m_scale.z != 0.0) ? (1.0 / m_scale.z) : 0.0;
+    double ro[3] = { ro_r[0] * invSx, ro_r[1] * invSy, ro_r[2] * invSz };
+    double rd[3] = { rd_r[0] * invSx, rd_r[1] * invSy, rd_r[2] * invSz };
+
+    // Canonical cylinder: radius 1 in x-y, z in [-1,1]. World scale stretches it.
+    const double r = 1.0;
+    const double halfL = 1.0;
+    const double eps = 1e-12;
+
+    double best_t = std::numeric_limits<double>::infinity();
+    double best_p[3] = {0,0,0};
+    double best_n_local[3] = {0,0,0};
+    bool hit_found = false;
+
+    // Side intersection: x^2 + y^2 = r^2
+    const double A = rd[0]*rd[0] + rd[1]*rd[1];
+    const double B = 2.0 * (ro[0]*rd[0] + ro[1]*rd[1]);
+    const double C = ro[0]*ro[0] + ro[1]*ro[1] - r*r;
+    if (A > eps) {
+        const double disc = B*B - 4.0*A*C;
+        if (disc >= 0.0) {
+            const double sqrt_disc = std::sqrt(disc);
+            const double t1 = (-B - sqrt_disc) / (2.0*A);
+            const double t2 = (-B + sqrt_disc) / (2.0*A);
+            auto try_t = [&](double t) {
+                if (t < 0.0) return;
+                const double z = ro[2] + t * rd[2];
+                if (z < -halfL - eps || z > halfL + eps) return;
+                if (t < best_t) {
+                    best_t = t;
+                    best_p[0] = ro[0] + t*rd[0];
+                    best_p[1] = ro[1] + t*rd[1];
+                    best_p[2] = z;
+                    // normal outward on side
+                    const double len_xy = std::sqrt(best_p[0]*best_p[0] + best_p[1]*best_p[1]);
+                    if (len_xy > eps) {
+                        best_n_local[0] = best_p[0]/len_xy;
+                        best_n_local[1] = best_p[1]/len_xy;
+                        best_n_local[2] = 0.0;
+                    } else {
+                        best_n_local[0] = best_n_local[1] = 0.0; best_n_local[2] = 1.0;
+                    }
+                    hit_found = true;
+                }
+            };
+            try_t(t1);
+            try_t(t2);
+        }
+    }
+
+    // Caps at z = ±halfL
+    auto try_cap = [&](double z_cap, double nz) {
+        if (std::abs(rd[2]) < eps) return; // parallel to cap plane
+        const double t = (z_cap - ro[2]) / rd[2];
+        if (t < 0.0) return;
+        const double x = ro[0] + t * rd[0];
+        const double y = ro[1] + t * rd[1];
+        if (x*x + y*y <= r*r + 1e-9) {
+            if (t < best_t) {
+                best_t = t;
+                best_p[0] = x; best_p[1] = y; best_p[2] = z_cap;
+                best_n_local[0] = 0.0; best_n_local[1] = 0.0; best_n_local[2] = nz;
+                hit_found = true;
+            }
+        }
+    };
+    try_cap(+halfL, +1.0);
+    try_cap(-halfL, -1.0);
+
+    if (!hit_found) return false;
+
+    // Transform normal back to world: n_world ∝ R * S^{-1} * n_local
+    double n_scaled[3] = { best_n_local[0] * invSx, best_n_local[1] * invSy, best_n_local[2] * invSz };
+    double n_world_raw[3]; mul_mat_vec(R, n_scaled, n_world_raw);
+    const double nlen = std::sqrt(n_world_raw[0]*n_world_raw[0] + n_world_raw[1]*n_world_raw[1] + n_world_raw[2]*n_world_raw[2]);
+    double n_unit[3] = { n_world_raw[0]/nlen, n_world_raw[1]/nlen, n_world_raw[2]/nlen };
+
+    double p_scaled[3] = { best_p[0] * m_scale.x, best_p[1] * m_scale.y, best_p[2] * m_scale.z };
+    double p_world_rel[3]; mul_mat_vec(R, p_scaled, p_world_rel);
+    double p_world[3] = { p_world_rel[0] + m_translation.x, p_world_rel[1] + m_translation.y, p_world_rel[2] + m_translation.z };
+
+    // Reflected direction in world space
+    const double d_world[3] = { rd_w.x, rd_w.y, rd_w.z };
+    const double d_dot_n = d_world[0]*n_unit[0] + d_world[1]*n_unit[1] + d_world[2]*n_unit[2];
+    double r_world_tmp[3] = { d_world[0] - 2.0 * d_dot_n * n_unit[0],
+                              d_world[1] - 2.0 * d_dot_n * n_unit[1],
+                              d_world[2] - 2.0 * d_dot_n * n_unit[2] };
+    double r_len = std::sqrt(r_world_tmp[0]*r_world_tmp[0] + r_world_tmp[1]*r_world_tmp[1] + r_world_tmp[2]*r_world_tmp[2]);
+    if (r_len < 1e-15) r_len = 1.0;
+    double r_world[3] = { r_world_tmp[0]/r_len, r_world_tmp[1]/r_len, r_world_tmp[2]/r_len };
+
+    HitVec3 ip{ p_world[0], p_world[1], p_world[2] };
+    HitVec3 nrm{ n_unit[0], n_unit[1], n_unit[2] };
+    HitVec3 refl{ r_world[0], r_world[1], r_world[2] };
+
+    hit.setIntersectionPoint(ip);
+    hit.setSurfaceNormal(nrm);
+    hit.setReflectedDirection(refl);
+
+    const double dx = p_world[0] - ro_w.x;
+    const double dy = p_world[1] - ro_w.y;
+    const double dz = p_world[2] - ro_w.z;
+    const double d_len = std::sqrt(d_world[0]*d_world[0] + d_world[1]*d_world[1] + d_world[2]*d_world[2]);
+    const double dist_world = (d_len > 1e-15) ? (dx*d_world[0] + dy*d_world[1] + dz*d_world[2]) / d_len
+                                              : std::sqrt(dx*dx + dy*dy + dz*dz);
+    hit.setDistanceAlongRay(dist_world);
+    return true;
 }
 
 // ---------- Sphere ----------
-Sphere::Sphere() : m_location{0,0,0}, m_radius(1.0) {}
-Sphere::Sphere(const Float3& location, double radius) : m_location(location), m_radius(radius) {}
+Sphere::Sphere() : m_location{0,0,0}, m_scale{1.0,1.0,1.0} {}
+Sphere::Sphere(const Float3& location, const Float3& scale) : m_location(location), m_scale(scale) {}
 
 std::vector<Sphere> Sphere::read_from_json(const std::string& class_block) {
     std::vector<Sphere> result;
@@ -243,17 +368,93 @@ std::vector<Sphere> Sphere::read_from_json(const std::string& class_block) {
         std::string tail = class_block.substr(key_pos);
         std::string sub; if (!util_json::extract_object_block(tail, it->str(1), sub)) continue;
 
-        Float3 loc{0,0,0}; double radius = 1.0;
+        Float3 loc{0,0,0}; Float3 scale{1.0,1.0,1.0};
         { double x=0,y=0,z=0; if (util_json::parse_vec3(sub, "location", x, y, z)) loc = Float3{ x, y, z }; }
-        util_json::parse_number(sub, "radius", radius);
-        result.emplace_back(loc, radius);
+        // Prefer per-axis scale if provided; else radius for uniform sphere
+        double sx=1, sy=1, sz=1; if (util_json::parse_vec3(sub, "scale", sx, sy, sz)) { scale = Float3{ sx, sy, sz }; }
+        result.emplace_back(loc, scale);
     }
     return result;
 }
 
 void Sphere::write_to_console(std::ostream& out) const {
     out << "Sphere(location=[" << m_location.x << ", " << m_location.y << ", " << m_location.z
-        << "], radius=" << m_radius << ")\n";
+        << "], scale=[" << m_scale.x << ", " << m_scale.y << ", " << m_scale.z << "])\n";
+}
+
+bool Sphere::intersect(const Ray& ray, Hit& hit) const {
+    // Treat as ellipsoid: p_world = C + S * p_local, with unit sphere in local.
+    const RayVec3 ro_w = ray.getPosition();
+    const RayVec3 rd_w = ray.getDirection();
+
+    // Transform to local by inverse scale around center
+    const double invSx = (m_scale.x != 0.0) ? (1.0 / m_scale.x) : 0.0;
+    const double invSy = (m_scale.y != 0.0) ? (1.0 / m_scale.y) : 0.0;
+    const double invSz = (m_scale.z != 0.0) ? (1.0 / m_scale.z) : 0.0;
+
+    const double ro_local[3] = { (ro_w.x - m_location.x) * invSx,
+                                 (ro_w.y - m_location.y) * invSy,
+                                 (ro_w.z - m_location.z) * invSz };
+    const double rd_local[3] = { rd_w.x * invSx, rd_w.y * invSy, rd_w.z * invSz };
+
+    // Intersect with sphere of radius r_local. If radius provided, scale unit sphere by r first.
+    const double r = 1.0; // unit sphere in local metrics; world scale shapes it
+    const double A = rd_local[0]*rd_local[0] + rd_local[1]*rd_local[1] + rd_local[2]*rd_local[2];
+    const double B = 2.0 * (ro_local[0]*rd_local[0] + ro_local[1]*rd_local[1] + ro_local[2]*rd_local[2]);
+    const double C = ro_local[0]*ro_local[0] + ro_local[1]*ro_local[1] + ro_local[2]*ro_local[2] - r*r;
+    const double eps = 1e-12;
+    if (A < eps) return false;
+    const double disc = B*B - 4.0*A*C;
+    if (disc < 0.0) return false;
+    const double sqrt_disc = std::sqrt(disc);
+    double t0 = (-B - sqrt_disc) / (2.0*A);
+    double t1 = (-B + sqrt_disc) / (2.0*A);
+    if (t0 > t1) std::swap(t0, t1);
+    double t_local = (t0 >= 0.0) ? t0 : t1;
+    if (t_local < 0.0) return false;
+
+    // Local intersection point
+    const double p_local[3] = { ro_local[0] + t_local*rd_local[0],
+                                ro_local[1] + t_local*rd_local[1],
+                                ro_local[2] + t_local*rd_local[2] };
+
+    // Transform point back to world: p_w = C + S * p_local
+    const double p_world[3] = { m_location.x + p_local[0] * m_scale.x,
+                                m_location.y + p_local[1] * m_scale.y,
+                                m_location.z + p_local[2] * m_scale.z };
+
+    // Normal: n_world ∝ S^{-1} * n_local, where n_local = p_local / r
+    double n_local[3] = { p_local[0] / r, p_local[1] / r, p_local[2] / r };
+    double n_world_raw[3] = { n_local[0] * invSx, n_local[1] * invSy, n_local[2] * invSz };
+    const double nlen = std::sqrt(n_world_raw[0]*n_world_raw[0] + n_world_raw[1]*n_world_raw[1] + n_world_raw[2]*n_world_raw[2]);
+    double n_unit[3] = { n_world_raw[0]/nlen, n_world_raw[1]/nlen, n_world_raw[2]/nlen };
+
+    // Reflection in world space
+    const double d_world[3] = { rd_w.x, rd_w.y, rd_w.z };
+    const double d_dot_n = d_world[0]*n_unit[0] + d_world[1]*n_unit[1] + d_world[2]*n_unit[2];
+    double r_world_tmp[3] = { d_world[0] - 2.0 * d_dot_n * n_unit[0],
+                              d_world[1] - 2.0 * d_dot_n * n_unit[1],
+                              d_world[2] - 2.0 * d_dot_n * n_unit[2] };
+    double rlen = std::sqrt(r_world_tmp[0]*r_world_tmp[0] + r_world_tmp[1]*r_world_tmp[1] + r_world_tmp[2]*r_world_tmp[2]);
+    if (rlen < 1e-15) rlen = 1.0;
+    double r_world[3] = { r_world_tmp[0]/rlen, r_world_tmp[1]/rlen, r_world_tmp[2]/rlen };
+
+    HitVec3 ip{ p_world[0], p_world[1], p_world[2] };
+    HitVec3 nrm{ n_unit[0], n_unit[1], n_unit[2] };
+    HitVec3 refl{ r_world[0], r_world[1], r_world[2] };
+    hit.setIntersectionPoint(ip);
+    hit.setSurfaceNormal(nrm);
+    hit.setReflectedDirection(refl);
+
+    // Distance along original world ray: project vector from origin to ip onto direction
+    const double dx = p_world[0] - ro_w.x;
+    const double dy = p_world[1] - ro_w.y;
+    const double dz = p_world[2] - ro_w.z;
+    const double d_len = std::sqrt(d_world[0]*d_world[0] + d_world[1]*d_world[1] + d_world[2]*d_world[2]);
+    const double dist_world = (d_len > 1e-15) ? (dx*d_world[0] + dy*d_world[1] + dz*d_world[2]) / d_len
+                                              : std::sqrt(dx*dx + dy*dy + dz*dz);
+    hit.setDistanceAlongRay(dist_world);
+    return true;
 }
 
 // ---------- Plane ----------

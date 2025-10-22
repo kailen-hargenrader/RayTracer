@@ -52,35 +52,41 @@ private:
     Float3 m_scale;
 };
 
-/** Cylinder mesh defined by transform, uniform scale, radius, and length. */
+/** Cylinder mesh defined by transform and per-axis scale only.
+ *  Canonical local cylinder: x^2 + y^2 = 1, z in [-1, 1]
+ *  Forward transform: p_world = T + R * (S * p_local)
+ */
 class Cylinder : public Mesh {
 public:
     Cylinder();
-    Cylinder(const Float3& translation, const EulerAngles& rotation, double scale, double radius, double length);
+    Cylinder(const Float3& translation, const EulerAngles& rotation, const Float3& scale);
 
     static std::vector<Cylinder> read_from_json(const std::string& class_block);
     void write_to_console(std::ostream& out) const override;
+    bool intersect(const Ray& ray, Hit& hit) const override;
 
 private:
     Float3 m_translation;
     EulerAngles m_rotation;
-    double m_scale;
-    double m_radius;
-    double m_length;
+    Float3 m_scale; // per-axis
 };
 
-/** Sphere mesh defined by center location and radius. */
+/** Sphere mesh defined by center location and per-axis scale only.
+ *  Canonical local sphere: x^2 + y^2 + z^2 = 1; world ellipsoid via scale.
+ *  Forward transform: p_world = C + S * p_local
+ */
 class Sphere : public Mesh {
 public:
     Sphere();
-    Sphere(const Float3& location, double radius);
+    Sphere(const Float3& location, const Float3& scale);
 
     static std::vector<Sphere> read_from_json(const std::string& class_block);
     void write_to_console(std::ostream& out) const override;
+    bool intersect(const Ray& ray, Hit& hit) const override;
 
 private:
     Float3 m_location;
-    double m_radius;
+    Float3 m_scale; // per-axis
 };
 
 /** Plane mesh defined by four corner points. */
