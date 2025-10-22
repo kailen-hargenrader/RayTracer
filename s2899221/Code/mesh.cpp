@@ -1,15 +1,10 @@
 #include "mesh.h"
 #include "utils.h"
-#include "utils.h"
 
 #include <iostream>
 #include <sstream>
 #include <fstream>
 #include <regex>
-#include <cmath>
-#include <limits>
-
-// JSON-like parsing helpers are implemented in utils.{h,cpp}
 #include <cmath>
 #include <limits>
 
@@ -35,20 +30,14 @@ std::vector<Cube> Cube::read_from_json(const std::string& class_block) {
         // Build a temporary string starting from this position to ensure extract works
         std::string tail = class_block.substr(key_pos);
         if (!util_json::extract_object_block(tail, it->str(1), sub)) continue;
-        if (!util_json::extract_object_block(tail, it->str(1), sub)) continue;
 
         Float3 tr{0,0,0}; EulerAngles rot{0,0,0}; double scale = 1.0;
         {
             double x=0,y=0,z=0; if (util_json::parse_vec3(sub, "translation", x, y, z)) tr = Float3{ x, y, z };
         }
-        {
-            double x=0,y=0,z=0; if (util_json::parse_vec3(sub, "translation", x, y, z)) tr = Float3{ x, y, z };
-        }
         // rotation fields named roll, pitch, yaw
         double r=0,p=0,y=0; util_json::parse_number(sub, "roll", r); util_json::parse_number(sub, "pitch", p); util_json::parse_number(sub, "yaw", y);
-        double r=0,p=0,y=0; util_json::parse_number(sub, "roll", r); util_json::parse_number(sub, "pitch", p); util_json::parse_number(sub, "yaw", y);
         rot = EulerAngles{ r, p, y };
-        util_json::parse_number(sub, "scale", scale);
         util_json::parse_number(sub, "scale", scale);
 
         result.emplace_back(tr, rot, scale);
@@ -210,17 +199,11 @@ std::vector<Cylinder> Cylinder::read_from_json(const std::string& class_block) {
         const size_t key_pos = static_cast<size_t>(it->position());
         std::string tail = class_block.substr(key_pos);
         std::string sub; if (!util_json::extract_object_block(tail, it->str(1), sub)) continue;
-        std::string sub; if (!util_json::extract_object_block(tail, it->str(1), sub)) continue;
 
         Float3 tr{0,0,0}; EulerAngles rot{0,0,0}; double scale = 1.0; double radius = 1.0; double length = 1.0;
         { double x=0,y=0,z=0; if (util_json::parse_vec3(sub, "translation", x, y, z)) tr = Float3{ x, y, z }; }
         double r=0,p=0,y=0; util_json::parse_number(sub, "roll", r); util_json::parse_number(sub, "pitch", p); util_json::parse_number(sub, "yaw", y);
-        { double x=0,y=0,z=0; if (util_json::parse_vec3(sub, "translation", x, y, z)) tr = Float3{ x, y, z }; }
-        double r=0,p=0,y=0; util_json::parse_number(sub, "roll", r); util_json::parse_number(sub, "pitch", p); util_json::parse_number(sub, "yaw", y);
         rot = EulerAngles{ r, p, y };
-        util_json::parse_number(sub, "scale", scale);
-        util_json::parse_number(sub, "radius", radius);
-        util_json::parse_number(sub, "length", length);
         util_json::parse_number(sub, "scale", scale);
         util_json::parse_number(sub, "radius", radius);
         util_json::parse_number(sub, "length", length);
@@ -249,11 +232,8 @@ std::vector<Sphere> Sphere::read_from_json(const std::string& class_block) {
         const size_t key_pos = static_cast<size_t>(it->position());
         std::string tail = class_block.substr(key_pos);
         std::string sub; if (!util_json::extract_object_block(tail, it->str(1), sub)) continue;
-        std::string sub; if (!util_json::extract_object_block(tail, it->str(1), sub)) continue;
 
         Float3 loc{0,0,0}; double radius = 1.0;
-        { double x=0,y=0,z=0; if (util_json::parse_vec3(sub, "location", x, y, z)) loc = Float3{ x, y, z }; }
-        util_json::parse_number(sub, "radius", radius);
         { double x=0,y=0,z=0; if (util_json::parse_vec3(sub, "location", x, y, z)) loc = Float3{ x, y, z }; }
         util_json::parse_number(sub, "radius", radius);
         result.emplace_back(loc, radius);
@@ -279,11 +259,9 @@ std::vector<Plane> Plane::read_from_json(const std::string& class_block) {
         const size_t key_pos = static_cast<size_t>(it->position());
         std::string tail = class_block.substr(key_pos);
         std::string sub; if (!util_json::extract_object_block(tail, it->str(1), sub)) continue;
-        std::string sub; if (!util_json::extract_object_block(tail, it->str(1), sub)) continue;
 
         // corners is an array of 4 objects {x,y,z}
         std::string corners_block;
-        if (!util_json::extract_object_block(sub, "corners", corners_block)) {
         if (!util_json::extract_object_block(sub, "corners", corners_block)) {
             continue;
         }
@@ -309,7 +287,6 @@ std::vector<Plane> Plane::read_from_json(const std::string& class_block) {
             const std::string one_corner = corners_block.substr(brace_pos + 1, end_pos - brace_pos - 1);
             search_offset = end_pos + 1;
 
-            double x=0,y=0,z=0; util_json::parse_number(one_corner, "x", x); util_json::parse_number(one_corner, "y", y); util_json::parse_number(one_corner, "z", z);
             double x=0,y=0,z=0; util_json::parse_number(one_corner, "x", x); util_json::parse_number(one_corner, "y", y); util_json::parse_number(one_corner, "z", z);
             corners.push_back(Float3{ x, y, z });
             if (corners.size() == 4) break;
