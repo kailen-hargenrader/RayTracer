@@ -35,11 +35,11 @@ struct EulerAngles {
     double yaw;
 };
 
-/** Unit cube mesh with transform (translation, rotation) and uniform scale. */
+/** Unit cube mesh with transform (translation, rotation) and per-axis scale. */
 class Cube : public Mesh {
 public:
     Cube();
-    Cube(const Float3& translation, const EulerAngles& rotation, double scale);
+    Cube(const Float3& translation, const EulerAngles& rotation, const Float3& scale);
 
     static std::vector<Cube> read_from_json(const std::string& class_block);
     void write_to_console(std::ostream& out) const override;
@@ -49,7 +49,7 @@ public:
 private:
     Float3 m_translation;
     EulerAngles m_rotation;
-    double m_scale;
+    Float3 m_scale;
 };
 
 /** Cylinder mesh defined by transform, uniform scale, radius, and length. */

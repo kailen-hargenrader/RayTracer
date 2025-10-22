@@ -11,8 +11,8 @@
 // JSON-like parsing helpers are implemented in utils.{h,cpp}
 
 // ---------- Cube ----------
-Cube::Cube() : m_translation{0,0,0}, m_rotation{0,0,0}, m_scale(1.0) {}
-Cube::Cube(const Float3& translation, const EulerAngles& rotation, double scale)
+Cube::Cube() : m_translation{0,0,0}, m_rotation{0,0,0}, m_scale{1.0, 1.0, 1.0} {}
+Cube::Cube(const Float3& translation, const EulerAngles& rotation, const Float3& scale)
     : m_translation(translation), m_rotation(rotation), m_scale(scale) {}
 
 std::vector<Cube> Cube::read_from_json(const std::string& class_block) {
@@ -31,14 +31,16 @@ std::vector<Cube> Cube::read_from_json(const std::string& class_block) {
         std::string tail = class_block.substr(key_pos);
         if (!util_json::extract_object_block(tail, it->str(1), sub)) continue;
 
-        Float3 tr{0,0,0}; EulerAngles rot{0,0,0}; double scale = 1.0;
+        Float3 tr{0,0,0}; EulerAngles rot{0,0,0}; Float3 scale{1.0, 1.0, 1.0};
         {
             double x=0,y=0,z=0; if (util_json::parse_vec3(sub, "translation", x, y, z)) tr = Float3{ x, y, z };
         }
         // rotation fields named roll, pitch, yaw
         double r=0,p=0,y=0; util_json::parse_number(sub, "roll", r); util_json::parse_number(sub, "pitch", p); util_json::parse_number(sub, "yaw", y);
         rot = EulerAngles{ r, p, y };
-        util_json::parse_number(sub, "scale", scale);
+        {
+            double sx=1, sy=1, sz=1; if (util_json::parse_vec3(sub, "scale", sx, sy, sz)) scale = Float3{ sx, sy, sz };
+        }
 
         result.emplace_back(tr, rot, scale);
     }
@@ -48,7 +50,7 @@ std::vector<Cube> Cube::read_from_json(const std::string& class_block) {
 void Cube::write_to_console(std::ostream& out) const {
     out << "Cube(translation=[" << m_translation.x << ", " << m_translation.y << ", " << m_translation.z
         << "], rotation(rpy)=[" << m_rotation.roll << ", " << m_rotation.pitch << ", " << m_rotation.yaw
-        << "], scale=" << m_scale << ")\n";
+        << "], scale=[" << m_scale.x << ", " << m_scale.y << ", " << m_scale.z << "])\n";
 }
 
 static inline void build_rotation_matrix_rpy(double roll, double pitch, double yaw, double R[3][3]) {
@@ -99,15 +101,17 @@ bool Cube::intersect(const Ray& ray, Hit& hit) const {
     const RayVec3 ro_w = ray.getPosition();
     const RayVec3 rd_w = ray.getDirection();
 
-    // Translate to object frame and apply inverse rotation and inverse uniform scale
+    // Translate to object frame and apply inverse rotation and inverse non-uniform scale
     const double to_obj[3] = { ro_w.x - m_translation.x, ro_w.y - m_translation.y, ro_w.z - m_translation.z };
     double ro_r[3]; mul_mat_vec(RT, to_obj, ro_r);
     double rd_in[3] = { rd_w.x, rd_w.y, rd_w.z };
     double rd_r[3]; mul_mat_vec(RT, rd_in, rd_r);
 
-    const double invS = (m_scale != 0.0) ? (1.0 / m_scale) : 0.0;
-    double ro[3] = { ro_r[0] * invS, ro_r[1] * invS, ro_r[2] * invS };
-    double rd[3] = { rd_r[0] * invS, rd_r[1] * invS, rd_r[2] * invS };
+    const double invSx = (m_scale.x != 0.0) ? (1.0 / m_scale.x) : 0.0;
+    const double invSy = (m_scale.y != 0.0) ? (1.0 / m_scale.y) : 0.0;
+    const double invSz = (m_scale.z != 0.0) ? (1.0 / m_scale.z) : 0.0;
+    double ro[3] = { ro_r[0] * invSx, ro_r[1] * invSy, ro_r[2] * invSz };
+    double rd[3] = { rd_r[0] * invSx, rd_r[1] * invSy, rd_r[2] * invSz };
 
     // Slab intersection with AABB [-1,1]^3
     const double eps = 1e-12;
@@ -150,23 +154,27 @@ bool Cube::intersect(const Ray& ray, Hit& hit) const {
     // Intersection point in local cube space
     double p_local[3] = { ro[0] + t_hit * rd[0], ro[1] + t_hit * rd[1], ro[2] + t_hit * rd[2] };
 
-    // Transform normal back to world (rotation only)
-    double n_world[3]; mul_mat_vec(R, n_local, n_world);
+    // Transform normal back to world: n_world ∝ R * S^{-1} * n_local
+    double n_scaled[3] = { n_local[0] * invSx, n_local[1] * invSy, n_local[2] * invSz };
+    double n_world[3]; mul_mat_vec(R, n_scaled, n_world);
     // Normalize normal to be unit length
     const double nlen = std::sqrt(n_world[0]*n_world[0] + n_world[1]*n_world[1] + n_world[2]*n_world[2]);
     double n_unit[3] = { n_world[0]/nlen, n_world[1]/nlen, n_world[2]/nlen };
 
-    // Transform intersection point back to world: p_w = T + R * (p_local * scale)
-    double p_scaled[3] = { p_local[0] * m_scale, p_local[1] * m_scale, p_local[2] * m_scale };
+    // Transform intersection point back to world: p_w = T + R * (S * p_local)
+    double p_scaled[3] = { p_local[0] * m_scale.x, p_local[1] * m_scale.y, p_local[2] * m_scale.z };
     double p_world[3]; mul_mat_vec(R, p_scaled, p_world);
     p_world[0] += m_translation.x; p_world[1] += m_translation.y; p_world[2] += m_translation.z;
 
-    // Reflected direction in world space: r = d - 2 (d·n) n (n must be unit)
+    // Reflected direction in world space: r = d - 2 (d·n) n (ensure unit length)
     const double d_world[3] = { rd_w.x, rd_w.y, rd_w.z };
     const double d_dot_n = d_world[0]*n_unit[0] + d_world[1]*n_unit[1] + d_world[2]*n_unit[2];
-    double r_world[3] = { d_world[0] - 2.0 * d_dot_n * n_unit[0],
-                          d_world[1] - 2.0 * d_dot_n * n_unit[1],
-                          d_world[2] - 2.0 * d_dot_n * n_unit[2] };
+    double r_world_tmp[3] = { d_world[0] - 2.0 * d_dot_n * n_unit[0],
+                              d_world[1] - 2.0 * d_dot_n * n_unit[1],
+                              d_world[2] - 2.0 * d_dot_n * n_unit[2] };
+    double r_len = std::sqrt(r_world_tmp[0]*r_world_tmp[0] + r_world_tmp[1]*r_world_tmp[1] + r_world_tmp[2]*r_world_tmp[2]);
+    if (r_len < 1e-15) r_len = 1.0; // avoid divide by zero
+    double r_world[3] = { r_world_tmp[0]/r_len, r_world_tmp[1]/r_len, r_world_tmp[2]/r_len };
 
     // Populate Hit (world coordinates)
     HitVec3 ip{ p_world[0], p_world[1], p_world[2] };
@@ -176,11 +184,13 @@ bool Cube::intersect(const Ray& ray, Hit& hit) const {
     hit.setIntersectionPoint(ip);
     hit.setSurfaceNormal(nrm);
     hit.setReflectedDirection(refl);
-    // Distance along original world ray
+    // Distance along original world ray (projection along the ray direction)
     const double dx = p_world[0] - ro_w.x;
     const double dy = p_world[1] - ro_w.y;
     const double dz = p_world[2] - ro_w.z;
-    const double dist_world = std::sqrt(dx*dx + dy*dy + dz*dz);
+    const double d_len = std::sqrt(d_world[0]*d_world[0] + d_world[1]*d_world[1] + d_world[2]*d_world[2]);
+    const double dist_world = (d_len > 1e-15) ? (dx*d_world[0] + dy*d_world[1] + dz*d_world[2]) / d_len
+                                              : std::sqrt(dx*dx + dy*dy + dz*dz);
     hit.setDistanceAlongRay(dist_world);
     return true;
 }
