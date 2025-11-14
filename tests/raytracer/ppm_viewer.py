@@ -8,7 +8,7 @@ def main() -> None:
     if len(sys.argv) > 1:
         img_path = Path(sys.argv[1])
     else:
-        img_path = Path(__file__).parent / "duplicate_reference_64x64.ppm"
+        img_path = Path(__file__).parent / "rendered_cube_cylinder_plane_sphere.ppm"
 
     if not img_path.exists():
         print(f"PPM not found: {img_path}")

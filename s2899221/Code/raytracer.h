@@ -30,6 +30,16 @@ public:
     /** Intersect a single ray against all meshes; return the closest hit if any. */
     bool one_pass_intersection(const Ray& ray, Hit& out_hit) const;
 
+		/** Simple shading: return white if hit is valid, otherwise black. */
+		static Pixel shade(const Hit& hit);
+
+		/**
+		 * Render the scene using the unaccelerated intersection routine.
+		 * Generates one ray per pixel for the specified camera id and writes a PPM image.
+		 * Returns true on success (camera found and file written).
+		 */
+		bool render_unaccelerated_ppm(const std::string& camera_id, const std::string& output_filepath) const;
+
     /** Access flat list of scene mesh pointers (for acceleration structures). */
     const std::vector<const Mesh*>& get_scene_mesh_ptrs() const { return m_scene_mesh_ptrs; }
 

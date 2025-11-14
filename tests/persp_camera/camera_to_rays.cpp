@@ -58,8 +58,8 @@ int main(int argc, char** argv) {
         std::ifstream in(json_path);
         if (!in) { std::cerr << "Failed to open JSON file: " << json_path << "\n"; return 1; }
         std::stringstream buf; buf << in.rdbuf(); const std::string content = buf.str();
-        std::string camera_block; if (!extract_object_block(content, "CAMERA", camera_block)) { std::cerr << "No CAMERA block\n"; return 1; }
-        std::string persp_block; if (!extract_object_block(camera_block, "PERSP", persp_block)) { std::cerr << "No PERSP block\n"; return 1; }
+        std::string camera_block; if (!util_json::extract_object_block(content, "CAMERA", camera_block)) { std::cerr << "No CAMERA block\n"; return 1; }
+        std::string persp_block; if (!util_json::extract_object_block(camera_block, "PERSP", persp_block)) { std::cerr << "No PERSP block\n"; return 1; }
         if (!extract_first_key(persp_block, camera_id)) { std::cerr << "No camera id found in PERSP block\n"; return 1; }
     }
 

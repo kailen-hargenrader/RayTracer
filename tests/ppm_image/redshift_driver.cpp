@@ -2,7 +2,7 @@
 #include <string>
 #include <exception>
 
-#include "../../s2899221/Code/image.h"
+#include "../../s2899221/Code/utils.h"
 
 // static inline unsigned char clamp_to_uchar(int v) {
 //     if (v < 0) return 0;

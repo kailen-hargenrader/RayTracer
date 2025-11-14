@@ -142,6 +142,46 @@ bool RayTracer::one_pass_intersection(const Ray& ray, Hit& out_hit) const {
 	return any_hit;
 }
 
+Pixel RayTracer::shade(const Hit& hit) {
+	// For now: white if we have a valid hit, otherwise the origin pixel (default black from caller)
+	if (hit.hasDistanceAlongRay()) {
+		return Pixel{ 255, 255, 255 };
+	}
+	else {
+		return Pixel{ 0, 0, 0 };
+	}
+}
+
+bool RayTracer::render_unaccelerated_ppm(const std::string& camera_id, const std::string& output_filepath) const {
+	auto it = m_cameras.find(camera_id);
+	if (it == m_cameras.end()) return false;
+	const Camera& cam = it->second;
+
+	int width = 0, height = 0;
+	cam.getImageResolution(width, height);
+	if (width <= 0 || height <= 0) return false;
+
+	Image img(width, height);
+	img.setMaxValue(255);
+
+	// Use existing helper to generate one ray per pixel
+	std::vector<Ray> rays = get_one_ray_per_pixel(camera_id);
+	if (static_cast<int>(rays.size()) != width * height) return false;
+
+	for (int y = 0; y < height; ++y) {
+		for (int x = 0; x < width; ++x) {
+			const size_t idx = static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x);
+			const Ray& r = rays[idx];
+			Hit h; (void)one_pass_intersection(r, h);
+			const Pixel color = RayTracer::shade(h);
+			img.setPixel(x, y, color.r, color.g, color.b);
+		}
+	}
+
+	img.write(output_filepath);
+	return true;
+}
+
 // ---------------- BVH construction and traversal ----------------
 
 static inline Float3 aabb_union_min(const Float3& a, const Float3& b) { return Float3{ std::min(a.x,b.x), std::min(a.y,b.y), std::min(a.z,b.z) }; }

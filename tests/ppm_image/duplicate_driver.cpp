@@ -2,7 +2,7 @@
 #include <string>
 #include <exception>
 
-#include "../../s2899221/Code/image.h"
+#include "../../s2899221/Code/utils.h"
 
 int main() {
     const std::string inputPath = "tests/ppm_image/reference_64x64.ppm";
