@@ -7,6 +7,7 @@
 #include <chrono>
 #include <algorithm>
 #include <stack>
+#include <cmath>
 
 using util_json::extract_object_block;
 using util_json::parse_number;
@@ -142,14 +143,77 @@ bool RayTracer::one_pass_intersection(const Ray& ray, Hit& out_hit) const {
 	return any_hit;
 }
 
-Pixel RayTracer::shade(const Hit& hit) {
-	// For now: white if we have a valid hit, otherwise the origin pixel (default black from caller)
-	if (hit.hasDistanceAlongRay()) {
-		return Pixel{ 255, 255, 255 };
-	}
-	else {
+Pixel RayTracer::shade(const Hit& hit, const Ray& view_ray) const {
+	// Return black if no valid surface data
+	if (!hit.hasDistanceAlongRay() || !hit.hasSurfaceNormal() || !hit.hasIntersectionPoint()) {
 		return Pixel{ 0, 0, 0 };
 	}
+
+	// Fetch shading inputs
+	const HitVec3 p = hit.getIntersectionPoint();
+	HitVec3 n = hit.getSurfaceNormal();
+
+	// Normalize normal defensively
+	auto length3 = [](double x, double y, double z) -> double {
+		return std::sqrt(x*x + y*y + z*z);
+	};
+	auto normalize3 = [&](double x, double y, double z) -> HitVec3 {
+		const double len = length3(x, y, z);
+		if (len <= 1e-15) return HitVec3{ 0.0, 0.0, 1.0 };
+		return HitVec3{ x/len, y/len, z/len };
+	};
+	auto dot3 = [](double ax, double ay, double az, double bx, double by, double bz) -> double {
+		return ax*bx + ay*by + az*bz;
+	};
+
+	n = normalize3(n.x, n.y, n.z);
+
+	// View direction (from point toward camera)
+	const RayVec3 cam_pos = view_ray.getPosition();
+	HitVec3 v = normalize3(cam_pos.x - p.x, cam_pos.y - p.y, cam_pos.z - p.z);
+
+	// Material/light parameters (grayscale for now; keep named for future color adaptation)
+	const double ambient_strength = 0.05;
+	const double diffuse_coeff = 1.0;
+	const double specular_coeff = 0.5;
+	const double shininess = 50.0;
+
+	// Accumulate Blinn-Phong over all point lights (inverse-square falloff)
+	double lighting = 0.0;
+
+	if (m_point_lights.empty()) {
+		// No lights: renderer will handle producing an all-black image,
+		// but keep shading robust and return black here as well.
+		//SHOULD NOT GET HERE
+		return Pixel{ 0, 0, 0 };
+	}
+	for (const auto& kv : m_point_lights) {
+		const PointLight& Ls = kv.second;
+		const double lx = Ls.location.x - p.x;
+		const double ly = Ls.location.y - p.y;
+		const double lz = Ls.location.z - p.z;
+		const double dist2 = std::max(1e-12, lx*lx + ly*ly + lz*lz);
+		const HitVec3 ldir = normalize3(lx, ly, lz);
+
+		const double n_dot_l = std::max(0.0, dot3(n.x, n.y, n.z, ldir.x, ldir.y, ldir.z));
+		const double diffuse = diffuse_coeff * n_dot_l;
+
+		// Blinn-Phong half vector
+		const HitVec3 h = normalize3(ldir.x + v.x, ldir.y + v.y, ldir.z + v.z);
+		const double n_dot_h = std::max(0.0, dot3(n.x, n.y, n.z, h.x, h.y, h.z));
+		const double specular = specular_coeff * std::pow(n_dot_h, shininess);
+
+		const double attenuation = Ls.radiant_intensity / dist2;
+		lighting += attenuation * (diffuse + specular);
+	}
+
+	// Add ambient term and clamp
+	double intensity = ambient_strength + lighting;
+	if (intensity < 0.0) intensity = 0.0;
+	if (intensity > 1.0) intensity = 1.0;
+
+	const unsigned char g = static_cast<unsigned char>(intensity * 255.0 + 0.5);
+	return Pixel{ g, g, g };
 }
 
 bool RayTracer::render_unaccelerated_ppm(const std::string& camera_id, const std::string& output_filepath) const {
@@ -164,6 +228,17 @@ bool RayTracer::render_unaccelerated_ppm(const std::string& camera_id, const std
 	Image img(width, height);
 	img.setMaxValue(255);
 
+	// If no lights in the scene, produce an all-black image immediately
+	if (m_point_lights.empty()) {
+		for (int y = 0; y < height; ++y) {
+			for (int x = 0; x < width; ++x) {
+				img.setPixel(x, y, 0, 0, 0);
+			}
+		}
+		img.write(output_filepath);
+		return true;
+	}
+
 	// Use existing helper to generate one ray per pixel
 	std::vector<Ray> rays = get_one_ray_per_pixel(camera_id);
 	if (static_cast<int>(rays.size()) != width * height) return false;
@@ -173,7 +248,7 @@ bool RayTracer::render_unaccelerated_ppm(const std::string& camera_id, const std
 			const size_t idx = static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x);
 			const Ray& r = rays[idx];
 			Hit h; (void)one_pass_intersection(r, h);
-			const Pixel color = RayTracer::shade(h);
+			const Pixel color = this->shade(h, r);
 			img.setPixel(x, y, color.r, color.g, color.b);
 		}
 	}

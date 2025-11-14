@@ -30,8 +30,8 @@ public:
     /** Intersect a single ray against all meshes; return the closest hit if any. */
     bool one_pass_intersection(const Ray& ray, Hit& out_hit) const;
 
-		/** Simple shading: return white if hit is valid, otherwise black. */
-		static Pixel shade(const Hit& hit);
+		/** Blinn-Phong shading (grayscale for now). */
+		Pixel shade(const Hit& hit, const Ray& view_ray) const;
 
 		/**
 		 * Render the scene using the unaccelerated intersection routine.
