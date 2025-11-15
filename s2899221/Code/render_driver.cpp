@@ -9,15 +9,16 @@
 #include "raytracer.cpp"
 
 static void print_usage() {
-	std::cerr << "Usage: render_driver <scene.json> <camera_id> <output.ppm> <color_ppm.ppm>\n";
+	std::cerr << "Usage: render_driver <scene.json> <camera_id> <output.ppm> [color_ppm.ppm|NONE] [samples_per_pixel]\n";
 	std::cerr << "- scene.json: path to JSON scene file\n";
 	std::cerr << "- camera_id: id string of camera to render\n";
 	std::cerr << "- output.ppm: destination PPM file path\n";
-	std::cerr << "- color_ppm.ppm: destination PPM file path for color map\n";
+	std::cerr << "- color_ppm.ppm|NONE: optional color map PPM, or NONE to disable\n";
+	std::cerr << "- samples_per_pixel: optional integer >=1 (default 1)\n";
 }
 
 int main(int argc, char** argv) {
-	if (argc < 4 || argc > 5) {
+	if (argc < 4 || argc > 6) {
 		print_usage();
 		return 1;
 	}
@@ -25,7 +26,8 @@ int main(int argc, char** argv) {
 	const std::string json_path = argv[1];
 	const std::string camera_id = argv[2];
 	const std::string output_path = argv[3];
-	const std::string color_ppm_path = argv[4];
+	const std::string color_ppm_path = (argc >= 5) ? std::string(argv[4]) : std::string("NONE");
+	const int samples_per_pixel = (argc >= 6) ? std::max(1, std::stoi(argv[5])) : 1;
 	
 
 	RayTracer rt;
@@ -34,7 +36,7 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
-	if (!rt.render_unaccelerated_ppm(camera_id, output_path, color_ppm_path)) {
+	if (!rt.render_unaccelerated_ppm(camera_id, output_path, color_ppm_path, samples_per_pixel)) {
 		std::cerr << "Render failed (bad camera id or write error)\n";
 		return 1;
 	}

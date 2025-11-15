@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <stack>
 #include <cmath>
+#include <random>
 
 using util_json::extract_object_block;
 using util_json::parse_number;
@@ -216,12 +217,7 @@ Pixel RayTracer::shade(const Hit& hit, const Ray& view_ray) const {
 	return Pixel{ g, g, g };
 }
 
-bool RayTracer::render_unaccelerated_ppm(const std::string& camera_id, const std::string& output_filepath) const {
-	// Delegate to the color-aware variant with no color image (falls back to grayscale)
-	return render_unaccelerated_ppm(camera_id, output_filepath, std::string());
-}
-
-bool RayTracer::render_unaccelerated_ppm(const std::string& camera_id, const std::string& output_filepath, const std::string& color_ppm_path) const {
+bool RayTracer::render_unaccelerated_ppm(const std::string& camera_id, const std::string& output_filepath, const std::string& color_ppm_path, int samples_per_pixel) const {
 	auto it = m_cameras.find(camera_id);
 	if (it == m_cameras.end()) return false;
 	const Camera& cam = it->second;
@@ -229,6 +225,7 @@ bool RayTracer::render_unaccelerated_ppm(const std::string& camera_id, const std
 	int width = 0, height = 0;
 	cam.getImageResolution(width, height);
 	if (width <= 0 || height <= 0) return false;
+	if (samples_per_pixel < 1) samples_per_pixel = 1;
 
 	Image img(width, height);
 	img.setMaxValue(255);
@@ -244,37 +241,67 @@ bool RayTracer::render_unaccelerated_ppm(const std::string& camera_id, const std
 		return true;
 	}
 
-	// Use existing helper to generate one ray per pixel
-	std::vector<Ray> rays = get_one_ray_per_pixel(camera_id);
-	if (static_cast<int>(rays.size()) != width * height) return false;
-
 	// Optional color image
 	bool use_color = false;
 	Image colorImg = Image(width, height); // placeholder default
 	if (!color_ppm_path.empty()) {
-		Image tmp(color_ppm_path);
-		if (tmp.width() == width && tmp.height() == height) {
-			colorImg = std::move(tmp);
-			use_color = true;
+		std::string lower = color_ppm_path;
+		std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
+		if (lower != "none" && color_ppm_path != "-") {
+			Image tmp(color_ppm_path);
+			if (tmp.width() == width && tmp.height() == height) {
+				colorImg = std::move(tmp);
+				use_color = true;
+			}
 		}
 	}
 
+	// Random jitter in pixel space, bounded to half a pixel in each axis
+	std::mt19937 rng(static_cast<unsigned int>(std::random_device{}()));
+	std::uniform_real_distribution<double> jitter_dist(-0.5, 0.5);
+
 	for (int y = 0; y < height; ++y) {
 		for (int x = 0; x < width; ++x) {
-			const size_t idx = static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x);
-			const Ray& r = rays[idx];
-			Hit h; (void)one_pass_intersection(r, h);
-			const Pixel shade_px = this->shade(h, r);
+			double accum_r = 0.0;
+			double accum_g = 0.0;
+			double accum_b = 0.0;
+			double accum_intensity = 0.0; // used when modulating a color image
+
+			for (int s = 0; s < samples_per_pixel; ++s) {
+				const double jx = (s == 0) ? 0.0 : jitter_dist(rng);
+				const double jy = (s == 0) ? 0.0 : jitter_dist(rng);
+
+				Vec3 ro, rd;
+				const double px = static_cast<double>(x) + 0.5 + jx;
+				const double py = static_cast<double>(y) + 0.5 + jy;
+				cam.pixelToRay(px, py, ro, rd);
+
+				Ray ray(RayVec3{ ro.x, ro.y, ro.z }, RayVec3{ rd.x, rd.y, rd.z });
+				Hit h; (void)one_pass_intersection(ray, h);
+				const Pixel spx = this->shade(h, ray);
+
+				if (use_color) {
+					const double intensity = static_cast<double>(spx.r) / 255.0;
+					accum_intensity += intensity;
+				} else {
+					accum_r += static_cast<double>(spx.r);
+					accum_g += static_cast<double>(spx.g);
+					accum_b += static_cast<double>(spx.b);
+				}
+			}
+
 			if (use_color) {
-				// Interpret grayscale shade as intensity, modulate color image pixel
-				const double intensity = static_cast<double>(shade_px.r) / 255.0;
 				const Pixel base = colorImg.getPixel(x, y);
-				const int rr = static_cast<int>(std::round(intensity * static_cast<double>(base.r)));
-				const int gg = static_cast<int>(std::round(intensity * static_cast<double>(base.g)));
-				const int bb = static_cast<int>(std::round(intensity * static_cast<double>(base.b)));
+				const double avg_intensity = accum_intensity / static_cast<double>(samples_per_pixel);
+				const int rr = static_cast<int>(std::round(avg_intensity * static_cast<double>(base.r)));
+				const int gg = static_cast<int>(std::round(avg_intensity * static_cast<double>(base.g)));
+				const int bb = static_cast<int>(std::round(avg_intensity * static_cast<double>(base.b)));
 				img.setPixel(x, y, rr, gg, bb);
 			} else {
-				img.setPixel(x, y, shade_px.r, shade_px.g, shade_px.b);
+				const int rr = static_cast<int>(std::round(accum_r / static_cast<double>(samples_per_pixel)));
+				const int gg = static_cast<int>(std::round(accum_g / static_cast<double>(samples_per_pixel)));
+				const int bb = static_cast<int>(std::round(accum_b / static_cast<double>(samples_per_pixel)));
+				img.setPixel(x, y, rr, gg, bb);
 			}
 		}
 	}

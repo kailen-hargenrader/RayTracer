@@ -8,7 +8,7 @@ def main() -> None:
     if len(sys.argv) > 1:
         img_path = Path(sys.argv[1])
     else:
-        img_path = Path(__file__).parent / "duplicate_reference_64x64.ppm"
+        img_path = Path(__file__).parent.parent / "s2899221" / "Output" / "Raytracer_480x270_color.ppm"
 
     if not img_path.exists():
         print(f"PPM not found: {img_path}")
