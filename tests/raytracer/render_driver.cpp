@@ -17,7 +17,7 @@ static void print_usage() {
 }
 
 int main(int argc, char** argv) {
-	if (argc < 4) {
+	if (argc < 4 || argc > 5) {
 		print_usage();
 		return 1;
 	}
@@ -25,6 +25,8 @@ int main(int argc, char** argv) {
 	const std::string json_path = argv[1];
 	const std::string camera_id = argv[2];
 	const std::string output_path = argv[3];
+	const std::string color_ppm_path = argv[4];
+	
 
 	RayTracer rt;
 	if (!rt.load_from_json(json_path)) {
@@ -32,7 +34,7 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
-	if (!rt.render_unaccelerated_ppm(camera_id, output_path)) {
+	if (!rt.render_unaccelerated_ppm(camera_id, output_path, color_ppm_path)) {
 		std::cerr << "Render failed (bad camera id or write error)\n";
 		return 1;
 	}

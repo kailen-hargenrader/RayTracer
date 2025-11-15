@@ -40,6 +40,12 @@ public:
 		 */
 		bool render_unaccelerated_ppm(const std::string& camera_id, const std::string& output_filepath) const;
 
+		/**
+		 * Render variant that modulates a provided color PPM by computed intensity.
+		 * If color image resolution mismatches, falls back to grayscale shading.
+		 */
+		bool render_unaccelerated_ppm(const std::string& camera_id, const std::string& output_filepath, const std::string& color_ppm_path) const;
+
     /** Access flat list of scene mesh pointers (for acceleration structures). */
     const std::vector<const Mesh*>& get_scene_mesh_ptrs() const { return m_scene_mesh_ptrs; }
 

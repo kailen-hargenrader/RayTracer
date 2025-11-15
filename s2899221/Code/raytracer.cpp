@@ -217,6 +217,11 @@ Pixel RayTracer::shade(const Hit& hit, const Ray& view_ray) const {
 }
 
 bool RayTracer::render_unaccelerated_ppm(const std::string& camera_id, const std::string& output_filepath) const {
+	// Delegate to the color-aware variant with no color image (falls back to grayscale)
+	return render_unaccelerated_ppm(camera_id, output_filepath, std::string());
+}
+
+bool RayTracer::render_unaccelerated_ppm(const std::string& camera_id, const std::string& output_filepath, const std::string& color_ppm_path) const {
 	auto it = m_cameras.find(camera_id);
 	if (it == m_cameras.end()) return false;
 	const Camera& cam = it->second;
@@ -243,13 +248,34 @@ bool RayTracer::render_unaccelerated_ppm(const std::string& camera_id, const std
 	std::vector<Ray> rays = get_one_ray_per_pixel(camera_id);
 	if (static_cast<int>(rays.size()) != width * height) return false;
 
+	// Optional color image
+	bool use_color = false;
+	Image colorImg = Image(width, height); // placeholder default
+	if (!color_ppm_path.empty()) {
+		Image tmp(color_ppm_path);
+		if (tmp.width() == width && tmp.height() == height) {
+			colorImg = std::move(tmp);
+			use_color = true;
+		}
+	}
+
 	for (int y = 0; y < height; ++y) {
 		for (int x = 0; x < width; ++x) {
 			const size_t idx = static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x);
 			const Ray& r = rays[idx];
 			Hit h; (void)one_pass_intersection(r, h);
-			const Pixel color = this->shade(h, r);
-			img.setPixel(x, y, color.r, color.g, color.b);
+			const Pixel shade_px = this->shade(h, r);
+			if (use_color) {
+				// Interpret grayscale shade as intensity, modulate color image pixel
+				const double intensity = static_cast<double>(shade_px.r) / 255.0;
+				const Pixel base = colorImg.getPixel(x, y);
+				const int rr = static_cast<int>(std::round(intensity * static_cast<double>(base.r)));
+				const int gg = static_cast<int>(std::round(intensity * static_cast<double>(base.g)));
+				const int bb = static_cast<int>(std::round(intensity * static_cast<double>(base.b)));
+				img.setPixel(x, y, rr, gg, bb);
+			} else {
+				img.setPixel(x, y, shade_px.r, shade_px.g, shade_px.b);
+			}
 		}
 	}
 
