@@ -1,62 +1,74 @@
 CXX=cl
 CXXFLAGS=/nologo /EHsc /std:c++17
 
-# Explicitly listed sources by subdirectory (no recursion, nmake-friendly paths)
+# Build from tests/ directory; write all .obj and .exe outputs to repo root (..)
+
+# ----- Grouped by folder (explicit files) -----
+# ppm_image
 PPM_IMAGE_SOURCES=ppm_image\\duplicate_driver.cpp ppm_image\\redshift_driver.cpp
-PERSP_CAMERA_SOURCES=persp_camera\\camera_to_rays.cpp persp_camera\\driver.cpp
+PPM_IMAGE_OBJECTS=..\\duplicate_driver.obj ..\\redshift_driver.obj
+PPM_IMAGE_EXES=..\\duplicate_driver.exe ..\\redshift_driver.exe
+
+# intersect
 INTERSECT_SOURCES=intersect\\test_intersect_fn.cpp
-MESH_SOURCES=mesh\\json_to_console.cpp
-RAYTRACER_SOURCES=raytracer\\time_driver.cpp raytracer\\render_driver.cpp
+INTERSECT_OBJECTS=..\\test_intersect_fn.obj
+INTERSECT_EXES=..\\test_intersect_fn.exe
 
-PPM_IMAGE_OBJECTS=ppm_image\\duplicate_driver.obj ppm_image\\redshift_driver.obj
-PERSP_CAMERA_OBJECTS=persp_camera\\camera_to_rays.obj persp_camera\\driver.obj
-INTERSECT_OBJECTS=intersect\\test_intersect_fn.obj
-MESH_OBJECTS=mesh\\json_to_console.obj
-RAYTRACER_OBJECTS=raytracer\\time_driver.obj raytracer\\render_driver.obj
+# raytracer
+RAYTRACER_SOURCES=raytracer\\time_driver.cpp
+RAYTRACER_OBJECTS=..\\time_driver.obj
+RAYTRACER_EXES=
 
-ALL_OBJECTS=$(PPM_IMAGE_OBJECTS) $(PERSP_CAMERA_OBJECTS) $(INTERSECT_OBJECTS) $(MESH_OBJECTS) $(RAYTRACER_OBJECTS)
+# core (from s2899221/Code)
+CORE_OBJECTS=..\\utils.obj ..\\mesh.obj
 
-.PHONY: all clean ppm_image persp_camera intersect mesh raytracer
+.PHONY: all clean ppm_image intersect raytracer
 
-all: ppm_image persp_camera intersect mesh raytracer
+all: ppm_image intersect raytracer
 
-# Per-subdirectory builds
-ppm_image: $(PPM_IMAGE_OBJECTS)
-persp_camera: $(PERSP_CAMERA_OBJECTS)
-intersect: $(INTERSECT_OBJECTS)
-mesh: $(MESH_OBJECTS)
+# ----- ppm_image (explicit) -----
+ppm_image: $(PPM_IMAGE_EXES)
+
+..\\duplicate_driver.obj: ppm_image\\duplicate_driver.cpp
+	$(CXX) $(CXXFLAGS) /c ppm_image\\duplicate_driver.cpp /Fo:..\\duplicate_driver.obj
+
+..\\redshift_driver.obj: ppm_image\\redshift_driver.cpp
+	$(CXX) $(CXXFLAGS) /c ppm_image\\redshift_driver.cpp /Fo:..\\redshift_driver.obj
+
+..\\duplicate_driver.exe: ..\\duplicate_driver.obj ..\\utils.obj
+	$(CXX) $(CXXFLAGS) ..\\duplicate_driver.obj ..\\utils.obj /Fe:..\\duplicate_driver.exe
+
+..\\redshift_driver.exe: ..\\redshift_driver.obj ..\\utils.obj
+	$(CXX) $(CXXFLAGS) ..\\redshift_driver.obj ..\\utils.obj /Fe:..\\redshift_driver.exe
+
+# ----- intersect (explicit) -----
+intersect: $(INTERSECT_EXES)
+
+..\\test_intersect_fn.obj: intersect\\test_intersect_fn.cpp
+	$(CXX) $(CXXFLAGS) /c intersect\\test_intersect_fn.cpp /Fo:..\\test_intersect_fn.obj
+
+..\\test_intersect_fn.exe: ..\\test_intersect_fn.obj ..\\mesh.obj ..\\utils.obj
+	$(CXX) $(CXXFLAGS) ..\\test_intersect_fn.obj ..\\mesh.obj ..\\utils.obj /Fe:..\\test_intersect_fn.exe
+
+# ----- raytracer (explicit) -----
 raytracer: $(RAYTRACER_OBJECTS)
-	$(CXX) $(CXXFLAGS) raytracer\\render_driver.obj /Fe:raytracer\\render_driver.exe
 
-# Explicit compile rules for each file (avoids GNU make pattern rules)
-ppm_image\\duplicate_driver.obj: ppm_image\\duplicate_driver.cpp
-	$(CXX) $(CXXFLAGS) /c ppm_image\\duplicate_driver.cpp /Fo:ppm_image\\duplicate_driver.obj
+..\\time_driver.obj: raytracer\\time_driver.cpp
+	$(CXX) $(CXXFLAGS) /c raytracer\\time_driver.cpp /Fo:..\\time_driver.obj
 
-ppm_image\\redshift_driver.obj: ppm_image\\redshift_driver.cpp
-	$(CXX) $(CXXFLAGS) /c ppm_image\\redshift_driver.cpp /Fo:ppm_image\\redshift_driver.obj
+# ----- core objects (explicit) -----
+..\\utils.obj: ..\\s2899221\\Code\\utils.cpp ..\\s2899221\\Code\\utils.h
+	$(CXX) $(CXXFLAGS) /c ..\\s2899221\\Code\\utils.cpp /Fo:..\\utils.obj
 
-persp_camera\\camera_to_rays.obj: persp_camera\\camera_to_rays.cpp
-	$(CXX) $(CXXFLAGS) /c persp_camera\\camera_to_rays.cpp /Fo:persp_camera\\camera_to_rays.obj
+..\\mesh.obj: ..\\s2899221\\Code\\mesh.cpp ..\\s2899221\\Code\\mesh.h ..\\s2899221\\Code\\utils.h
+	$(CXX) $(CXXFLAGS) /c ..\\s2899221\\Code\\mesh.cpp /Fo:..\\mesh.obj
 
-persp_camera\\driver.obj: persp_camera\\driver.cpp
-	$(CXX) $(CXXFLAGS) /c persp_camera\\driver.cpp /Fo:persp_camera\\driver.obj
-
-intersect\\test_intersect_fn.obj: intersect\\test_intersect_fn.cpp
-	$(CXX) $(CXXFLAGS) /c intersect\\test_intersect_fn.cpp /Fo:intersect\\test_intersect_fn.obj
-
-mesh\\json_to_console.obj: mesh\\json_to_console.cpp
-	$(CXX) $(CXXFLAGS) /c mesh\\json_to_console.cpp /Fo:mesh\\json_to_console.obj
-
-raytracer\\time_driver.obj: raytracer\\time_driver.cpp
-	$(CXX) $(CXXFLAGS) /c raytracer\\time_driver.cpp /Fo:raytracer\\time_driver.obj
-
-raytracer\\render_driver.obj: raytracer\\render_driver.cpp
-	$(CXX) $(CXXFLAGS) /c raytracer\\render_driver.cpp /Fo:raytracer\\render_driver.obj
-
-raytracer\\render_driver.exe: raytracer\\render_driver.obj
-	$(CXX) $(CXXFLAGS) raytracer\\render_driver.obj /Fe:raytracer\\render_driver.exe
-
+# ----- clean (explicit) -----
 clean:
-	-del /Q $(ALL_OBJECTS) raytracer\\render_driver.exe 2>NUL
+	-del /Q ..\\duplicate_driver.obj ..\\redshift_driver.obj 2>NUL
+	-del /Q ..\\test_intersect_fn.obj 2>NUL
+	-del /Q ..\\time_driver.obj 2>NUL
+	-del /Q ..\\utils.obj ..\\mesh.obj 2>NUL
+	-del /Q ..\\duplicate_driver.exe ..\\redshift_driver.exe ..\\test_intersect_fn.exe 2>NUL
 
 

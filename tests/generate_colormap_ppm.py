@@ -1,9 +1,8 @@
 import argparse
+width, height = 480, 270
+maxval = 255
 
-
-def write_ppm_64x64(path: str) -> None:
-    width, height = 64, 64
-    maxval = 255
+def write_ppm(path: str) -> None:
     with open(path, "w", encoding="utf-8") as f:
         f.write("P3\n")
         f.write(f"{width} {height}\n")
@@ -20,9 +19,9 @@ def write_ppm_64x64(path: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate a 64x64 PPM (P3) test image.")
-    parser.add_argument("--output", "-o", default="tests/ppm_image/64x64.ppm", help="Output PPM file path")
+    parser.add_argument("--output", "-o", default="tests/raytracer/480x270_color_map.ppm", help="Output PPM file path")
     args = parser.parse_args()
-    write_ppm_64x64(args.output)
+    write_ppm(args.output)
 
 
 if __name__ == "__main__":

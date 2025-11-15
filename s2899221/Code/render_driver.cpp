@@ -2,18 +2,18 @@
 #include <iostream>
 #include <string>
 
-#include "../../s2899221/Code/raytracer.h"
-// Pull implementations directly so this driver links as a single TU
-#include "../../s2899221/Code/utils.cpp"
-#include "../../s2899221/Code/mesh.cpp"
-#include "../../s2899221/Code/persp_camera.cpp"
-#include "../../s2899221/Code/raytracer.cpp"
+#include "raytracer.h"
+#include "utils.cpp"
+#include "mesh.cpp"
+#include "persp_camera.cpp"
+#include "raytracer.cpp"
 
 static void print_usage() {
-	std::cerr << "Usage: render_driver <scene.json> <camera_id> <output.ppm>\n";
+	std::cerr << "Usage: render_driver <scene.json> <camera_id> <output.ppm> <color_ppm.ppm>\n";
 	std::cerr << "- scene.json: path to JSON scene file\n";
 	std::cerr << "- camera_id: id string of camera to render\n";
 	std::cerr << "- output.ppm: destination PPM file path\n";
+	std::cerr << "- color_ppm.ppm: destination PPM file path for color map\n";
 }
 
 int main(int argc, char** argv) {
