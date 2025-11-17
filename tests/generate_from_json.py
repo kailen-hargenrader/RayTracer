@@ -67,6 +67,89 @@ def _get_first(container, keys, default=None):
 	return default if default is not None else {}
 
 
+def _as_material(mat_dict):
+	if not isinstance(mat_dict, dict):
+		return None
+	try:
+		alpha = float(mat_dict.get("alpha", 1.0))
+		metallic = float(mat_dict.get("metallic", 0.0))
+		roughness = float(mat_dict.get("roughness", 0.5))
+		ior = float(mat_dict.get("ior", 1.5))
+		return {"alpha": alpha, "metallic": metallic, "roughness": roughness, "ior": ior}
+	except Exception:
+		return None
+
+
+def _apply_material(obj, mat_props):
+	if obj is None or mat_props is None:
+		return
+	try:
+		alpha = float(mat_props.get("alpha", 1.0))
+		metallic = float(mat_props.get("metallic", 0.0))
+		roughness = float(mat_props.get("roughness", 0.5))
+		ior = float(mat_props.get("ior", 1.5))
+
+		name = f"FromJSON_{alpha:.3f}_{metallic:.3f}_{roughness:.3f}_{ior:.3f}"
+		mat = bpy.data.materials.get(name)
+		if mat is None:
+			mat = bpy.data.materials.new(name=name)
+			mat.use_nodes = True
+			nt = mat.node_tree
+			if nt:
+				bsdf = None
+				for n in nt.nodes:
+					if getattr(n, "type", "") == "BSDF_PRINCIPLED":
+						bsdf = n
+						break
+				if bsdf is None:
+					try:
+						bsdf = nt.nodes.new(type="ShaderNodeBsdfPrincipled")
+						out = None
+						for n in nt.nodes:
+							if getattr(n, "type", "") == "OUTPUT_MATERIAL":
+								out = n
+								break
+						if out and bsdf and hasattr(bsdf, "outputs"):
+							nt.links.new(bsdf.outputs.get("BSDF"), out.inputs.get("Surface"))
+					except Exception:
+						bsdf = None
+				if bsdf is not None:
+					try:
+						inp = bsdf.inputs
+						if "Metallic" in inp:
+							inp["Metallic"].default_value = metallic
+						if "Roughness" in inp:
+							inp["Roughness"].default_value = roughness
+						if "Alpha" in inp:
+							inp["Alpha"].default_value = alpha
+						if "IOR" in inp:
+							inp["IOR"].default_value = ior
+					except Exception:
+						pass
+		try:
+			mat.blend_method = 'BLEND' if alpha < 1.0 else 'OPAQUE'
+		except Exception:
+			pass
+		try:
+			mat.shadow_method = 'HASHED' if alpha < 1.0 else 'OPAQUE'
+		except Exception:
+			pass
+
+		me = getattr(obj, "data", None)
+		if me and hasattr(me, "materials"):
+			if len(me.materials) > 0:
+				me.materials[0] = mat
+			else:
+				me.materials.append(mat)
+		else:
+			try:
+				obj.active_material = mat
+			except Exception:
+				pass
+	except Exception:
+		return
+
+
 def _load_cubes(mesh_section):
 	cubes = _get_first(mesh_section, ["Cube", "cube"], {})
 	for _id, p in (cubes or {}).items():
@@ -78,6 +161,7 @@ def _load_cubes(mesh_section):
 		obj.location = trans
 		obj.rotation_euler = rot
 		obj.scale = scale_v
+		_apply_material(obj, _as_material(p.get("material")))
 
 
 def _load_cylinders(mesh_section):
@@ -91,6 +175,7 @@ def _load_cylinders(mesh_section):
 		obj.location = trans
 		obj.rotation_euler = rot
 		obj.scale = scale_v
+		_apply_material(obj, _as_material(p.get("material")))
 
 
 def _load_spheres(mesh_section):
@@ -102,6 +187,7 @@ def _load_spheres(mesh_section):
 		obj = bpy.context.active_object
 		obj.location = loc
 		obj.scale = scale_v
+		_apply_material(obj, _as_material(p.get("material")))
 
 
 def _load_planes(mesh_section):
@@ -116,6 +202,7 @@ def _load_planes(mesh_section):
 			bpy.ops.mesh.primitive_plane_add()
 			obj = bpy.context.active_object
 			# Without bmesh, we won't reshape to the exact quad
+			_apply_material(obj, _as_material(p.get("material")))
 			continue
 		mesh = bpy.data.meshes.new("Plane")
 		bm = bmesh.new()
@@ -125,6 +212,7 @@ def _load_planes(mesh_section):
 		bm.free()
 		obj = bpy.data.objects.new("Plane", mesh)
 		bpy.context.collection.objects.link(obj)
+		_apply_material(obj, _as_material(p.get("material")))
 
 
 def _load_point_lights(light_section):

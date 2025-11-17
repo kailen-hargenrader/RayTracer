@@ -13,6 +13,7 @@ struct Float3; // forward declare for Mesh::compute_aabb
 /** Base class for all mesh types. */
 class Mesh {
 public:
+    Mesh() : m_alpha(1.0), m_metallic(0.0), m_roughness(0.5), m_ior(1.5) {}
     virtual ~Mesh() = default;
 
     /** Write a human-readable representation to the provided stream. */
@@ -26,6 +27,21 @@ public:
 
     /** Return this as a BoundingBox if applicable, else nullptr (avoids RTTI cost). */
     virtual const class BoundingBox* asBoundingBox() const { return nullptr; }
+
+    /** Material properties parsed from JSON (if present). */
+    void setMaterial(double alpha, double metallic, double roughness) { m_alpha = alpha; m_metallic = metallic; m_roughness = roughness; }
+    double getAlpha() const { return m_alpha; }
+    double getMetallic() const { return m_metallic; }
+    double getRoughness() const { return m_roughness; }
+
+    void setIndexOfRefraction(double ior) { m_ior = ior; }
+    double getIndexOfRefraction() const { return m_ior; }
+
+protected:
+    double m_alpha;
+    double m_metallic;
+    double m_roughness;
+    double m_ior;
 };
 
 /** Simple 3D point/vector container used by mesh shapes. */

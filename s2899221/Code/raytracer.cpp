@@ -136,6 +136,7 @@ bool RayTracer::one_pass_intersection(const Ray& ray, Hit& out_hit) const {
 	for (const Mesh* m : m_scene_mesh_ptrs) {
 		Hit h;
 		if (m->intersect(ray, h) && h.hasDistanceAlongRay()) {
+			h.setMesh(m);
 			double dist = h.getDistanceAlongRay();
 			if (dist < best_dist) { best_dist = dist; best_hit = h; any_hit = true; }
 		}
@@ -409,7 +410,8 @@ bool accelerated_one_pass_intersection(const Mesh* bvh_root, const Ray& ray, Hit
 
         // Leaf: actual scene object
         Hit h;
-        if (node->intersect(ray, h) && h.hasDistanceAlongRay()) {
+		if (node->intersect(ray, h) && h.hasDistanceAlongRay()) {
+			h.setMesh(node);
             const double dist = h.getDistanceAlongRay();
             if (dist < best_dist) { best_dist = dist; best_hit = h; any_hit = true; }
         }

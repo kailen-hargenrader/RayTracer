@@ -42,8 +42,22 @@ std::vector<Cube> Cube::read_from_json(const std::string& class_block) {
         {
             double sx=1, sy=1, sz=1; if (util_json::parse_vec3(sub, "scale", sx, sy, sz)) scale = Float3{ sx, sy, sz };
         }
+        // material { alpha, metallic, roughness }
+        double alpha = 1.0, metallic = 0.0, roughness = 0.5, ior = 1.5;
+        {
+            std::string mat_block;
+            if (util_json::extract_object_block(sub, "material", mat_block)) {
+                util_json::parse_number(mat_block, "alpha", alpha);
+                util_json::parse_number(mat_block, "metallic", metallic);
+                util_json::parse_number(mat_block, "roughness", roughness);
+                util_json::parse_number(mat_block, "ior", ior);
+            }
+        }
 
-        result.emplace_back(tr, rot, scale);
+        Cube c(tr, rot, scale);
+        c.setMaterial(alpha, metallic, roughness);
+        c.setIndexOfRefraction(ior);
+        result.emplace_back(c);
     }
     return result;
 }
@@ -245,7 +259,21 @@ std::vector<Cylinder> Cylinder::read_from_json(const std::string& class_block) {
         double rr=0,pp=0,yy=0; util_json::parse_number(sub, "roll", rr); util_json::parse_number(sub, "pitch", pp); util_json::parse_number(sub, "yaw", yy);
         rot = EulerAngles{ rr, pp, yy };
         { double sx=1,sy=1,sz=1; if (util_json::parse_vec3(sub, "scale", sx, sy, sz)) scale = Float3{ sx, sy, sz }; }
-        result.emplace_back(tr, rot, scale);
+        // material { alpha, metallic, roughness }
+        double alpha = 1.0, metallic = 0.0, roughness = 0.5, ior = 1.5;
+        {
+            std::string mat_block;
+            if (util_json::extract_object_block(sub, "material", mat_block)) {
+                util_json::parse_number(mat_block, "alpha", alpha);
+                util_json::parse_number(mat_block, "metallic", metallic);
+                util_json::parse_number(mat_block, "roughness", roughness);
+                util_json::parse_number(mat_block, "ior", ior);
+            }
+        }
+        Cylinder c(tr, rot, scale);
+        c.setMaterial(alpha, metallic, roughness);
+        c.setIndexOfRefraction(ior);
+        result.emplace_back(c);
     }
     return result;
 }
@@ -426,7 +454,21 @@ std::vector<Sphere> Sphere::read_from_json(const std::string& class_block) {
         { double x=0,y=0,z=0; if (util_json::parse_vec3(sub, "location", x, y, z)) loc = Float3{ x, y, z }; }
         // Prefer per-axis scale if provided; else radius for uniform sphere
         double sx=1, sy=1, sz=1; if (util_json::parse_vec3(sub, "scale", sx, sy, sz)) { scale = Float3{ sx, sy, sz }; }
-        result.emplace_back(loc, scale);
+        // material { alpha, metallic, roughness }
+        double alpha = 1.0, metallic = 0.0, roughness = 0.5, ior = 1.5;
+        {
+            std::string mat_block;
+            if (util_json::extract_object_block(sub, "material", mat_block)) {
+                util_json::parse_number(mat_block, "alpha", alpha);
+                util_json::parse_number(mat_block, "metallic", metallic);
+                util_json::parse_number(mat_block, "roughness", roughness);
+                util_json::parse_number(mat_block, "ior", ior);
+            }
+        }
+        Sphere s(loc, scale);
+        s.setMaterial(alpha, metallic, roughness);
+        s.setIndexOfRefraction(ior);
+        result.emplace_back(s);
     }
     return result;
 }
@@ -577,7 +619,21 @@ std::vector<Plane> Plane::read_from_json(const std::string& class_block) {
             if (corners.size() == 4) break;
         }
         if (!corners.empty()) {
-            result.emplace_back(corners);
+            // material { alpha, metallic, roughness }
+            double alpha = 1.0, metallic = 0.0, roughness = 0.5, ior = 1.5;
+            {
+                std::string mat_block;
+                if (util_json::extract_object_block(sub, "material", mat_block)) {
+                    util_json::parse_number(mat_block, "alpha", alpha);
+                    util_json::parse_number(mat_block, "metallic", metallic);
+                    util_json::parse_number(mat_block, "roughness", roughness);
+                    util_json::parse_number(mat_block, "ior", ior);
+                }
+            }
+            Plane p(corners);
+            p.setMaterial(alpha, metallic, roughness);
+            p.setIndexOfRefraction(ior);
+            result.emplace_back(p);
         }
     }
     return result;

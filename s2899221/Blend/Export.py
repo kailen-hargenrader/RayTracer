@@ -25,6 +25,82 @@ def list3_to_dict(v):
 def vec2_to_dict(v):
     return {"x": int(v[0]), "y": int(v[1])}
 
+def extract_material_params_from_object(obj):
+    alpha = 1.0
+    metallic = 0.0
+    roughness = 0.5
+    ior = 1.5
+
+    try:
+        # Prefer active material; otherwise first slot with a material
+        material = getattr(obj, "active_material", None)
+        if material is None:
+            slots = getattr(obj, "material_slots", [])
+            for slot in slots:
+                m = getattr(slot, "material", None)
+                if m is not None:
+                    material = m
+                    break
+
+        if material is not None:
+            if getattr(material, "use_nodes", False) and getattr(material, "node_tree", None):
+                nt = material.node_tree
+                principled = None
+                for node in getattr(nt, "nodes", []):
+                    # Node.type is 'BSDF_PRINCIPLED' for Principled BSDF
+                    if getattr(node, "type", "") == "BSDF_PRINCIPLED" or getattr(node, "bl_idname", "") == "ShaderNodeBsdfPrincipled":
+                        principled = node
+                        break
+
+                if principled is not None:
+                    def _get_input_value(node, name, fallback):
+                        try:
+                            sock = node.inputs.get(name)
+                        except Exception:
+                            sock = None
+                        if sock is None:
+                            return float(fallback)
+                        try:
+                            val = getattr(sock, "default_value", fallback)
+                            if isinstance(val, (list, tuple)):
+                                return float(val[0]) if len(val) > 0 else float(fallback)
+                            return float(val)
+                        except Exception:
+                            return float(fallback)
+
+                    metallic = _get_input_value(principled, "Metallic", metallic)
+                    roughness = _get_input_value(principled, "Roughness", roughness)
+                    alpha = _get_input_value(principled, "Alpha", alpha)
+                    ior = _get_input_value(principled, "IOR", ior)
+            else:
+                # Fallbacks for non-node materials if available
+                try:
+                    metallic = float(getattr(material, "metallic", metallic))
+                except Exception:
+                    pass
+                try:
+                    roughness = float(getattr(material, "roughness", roughness))
+                except Exception:
+                    pass
+                try:
+                    alpha = float(getattr(material, "alpha", alpha))
+                except Exception:
+                    pass
+                try:
+                    ior = float(getattr(material, "ior", ior))
+                except Exception:
+                    pass
+    except Exception:
+        # Silently keep defaults if anything goes wrong
+        pass
+
+    return {
+        "alpha": float(alpha),
+        "metallic": float(metallic),
+        "roughness": float(roughness),
+        "ior": float(ior),
+    }
+
 def mesh_handler(mesh_dict, mesh_obj):
     def cube_handler(cube_dict, cube_obj):
         mw = cube_obj.matrix_world
@@ -38,10 +114,13 @@ def mesh_handler(mesh_dict, mesh_obj):
         scale_vec = mw.to_scale()
         scale = vec3_to_dict(scale_vec)
 
+        material = extract_material_params_from_object(cube_obj)
+
         cube_params = {
             "translation": translation,
             "rotation": rotation,
             "scale": scale,
+            "material": material,
         }
         cube_dict[id_gen.get_id()] = cube_params
     def cylinder_handler(cylinder_dict, cylinder_obj):
@@ -57,10 +136,13 @@ def mesh_handler(mesh_dict, mesh_obj):
         # Export full 3D scale vector only; consumers can derive radius/length if needed
         scale = vec3_to_dict(scale_vec)
 
+        material = extract_material_params_from_object(cylinder_obj)
+
         cylinder_params = {
             "translation": translation,
             "rotation": rotation,
             "scale": scale,
+            "material": material,
         }
         cylinder_dict[id_gen.get_id()] = cylinder_params
     def sphere_handler(sphere_dict, sphere_obj):
@@ -70,9 +152,12 @@ def mesh_handler(mesh_dict, mesh_obj):
         if abs(scale_vec.x - scale_vec.y) > 1e-6 or abs(scale_vec.y - scale_vec.z) > 1e-6:
             warnings.warn("Non-uniform scale on sphere; exporting non-uniform scale vector")
 
+        material = extract_material_params_from_object(sphere_obj)
+
         sphere_params = {
             "location": vec3_to_dict(location),
             "scale": vec3_to_dict(scale_vec),
+            "material": material,
         }
         sphere_dict[id_gen.get_id()] = sphere_params
     def plane_handler(plane_dict, plane_obj):
@@ -132,8 +217,11 @@ def mesh_handler(mesh_dict, mesh_obj):
             else:
                 warnings.warn("Plane has no bounding box; corners unavailable")
 
+        material = extract_material_params_from_object(plane_obj)
+
         plane_params = {
             "corners": [list3_to_dict(p) for p in corners],
+            "material": material,
         }
         plane_dict[id_gen.get_id()] = plane_params
 

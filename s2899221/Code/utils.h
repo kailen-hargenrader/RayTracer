@@ -24,6 +24,9 @@ bool parse_vec2i(const std::string& src, const std::string& key, int& outx, int&
 
 }
 
+// Forward declare Mesh to avoid cyclic includes
+class Mesh;
+
 /** Lightweight 3D vector in world coordinates for rays. */
 struct RayVec3 {
     double x;
@@ -68,7 +71,8 @@ public:
 		std::optional<HitVec3> intersectionPoint = std::nullopt,
 		std::optional<double> distanceAlongRay = std::nullopt,
 		std::optional<HitVec3> surfaceNormal = std::nullopt,
-		std::optional<HitVec3> reflectedDirection = std::nullopt
+		std::optional<HitVec3> reflectedDirection = std::nullopt,
+		std::optional<const Mesh*> mesh = std::nullopt
 	);
 
 	// Getters (throw if unset)
@@ -76,24 +80,28 @@ public:
 	double getDistanceAlongRay() const;
 	const HitVec3& getSurfaceNormal() const;
 	const HitVec3& getReflectedDirection() const;
+	const Mesh* getMesh() const;
 
 	// Setters
 	void setIntersectionPoint(const HitVec3& p);
 	void setDistanceAlongRay(double t);
 	void setSurfaceNormal(const HitVec3& n);
 	void setReflectedDirection(const HitVec3& r);
+	void setMesh(const Mesh* m);
 
 	// Presence checks
 	bool hasIntersectionPoint() const;
 	bool hasDistanceAlongRay() const;
 	bool hasSurfaceNormal() const;
 	bool hasReflectedDirection() const;
+	bool hasMesh() const;
 
 private:
 	std::optional<HitVec3> m_intersectionPoint;
 	std::optional<double> m_distanceAlongRay;
 	std::optional<HitVec3> m_surfaceNormal;
 	std::optional<HitVec3> m_reflectedDirection;
+	std::optional<const Mesh*> m_mesh;
 
 	[[noreturn]] static void throwUnset(const char* name) {
 		throw std::runtime_error(std::string("Hit: ") + name + " is unset");

@@ -89,12 +89,14 @@ Hit::Hit(
 	std::optional<HitVec3> intersectionPoint,
 	std::optional<double> distanceAlongRay,
 	std::optional<HitVec3> surfaceNormal,
-	std::optional<HitVec3> reflectedDirection
+	std::optional<HitVec3> reflectedDirection,
+	std::optional<const Mesh*> mesh
 )
 	: m_intersectionPoint(intersectionPoint)
 	, m_distanceAlongRay(distanceAlongRay)
 	, m_surfaceNormal(surfaceNormal)
 	, m_reflectedDirection(reflectedDirection)
+	, m_mesh(mesh)
 {}
 
 const HitVec3& Hit::getIntersectionPoint() const {
@@ -117,15 +119,22 @@ const HitVec3& Hit::getReflectedDirection() const {
 	return *m_reflectedDirection;
 }
 
+const Mesh* Hit::getMesh() const {
+	if (!m_mesh) throwUnset("mesh");
+	return *m_mesh;
+}
+
 void Hit::setIntersectionPoint(const HitVec3& p) { m_intersectionPoint = p; }
 void Hit::setDistanceAlongRay(double t) { m_distanceAlongRay = t; }
 void Hit::setSurfaceNormal(const HitVec3& n) { m_surfaceNormal = n; }
 void Hit::setReflectedDirection(const HitVec3& r) { m_reflectedDirection = r; }
+void Hit::setMesh(const Mesh* m) { m_mesh = m; }
 
 bool Hit::hasIntersectionPoint() const { return m_intersectionPoint.has_value(); }
 bool Hit::hasDistanceAlongRay() const { return m_distanceAlongRay.has_value(); }
 bool Hit::hasSurfaceNormal() const { return m_surfaceNormal.has_value(); }
 bool Hit::hasReflectedDirection() const { return m_reflectedDirection.has_value(); }
+bool Hit::hasMesh() const { return m_mesh.has_value(); }
 
 // ---------------- Image ----------------
 
