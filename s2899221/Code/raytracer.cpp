@@ -279,11 +279,67 @@ bool RayTracer::render_unaccelerated_ppm(const std::string& camera_id, const std
 
 				Ray ray(RayVec3{ ro.x, ro.y, ro.z }, RayVec3{ rd.x, rd.y, rd.z });
 				Hit h; (void)one_pass_intersection(ray, h);
-				const Pixel spx = this->shade(h, ray);
+				Pixel spx = this->shade(h, ray);
+
+				// Optional secondary ray based on material properties
+				double secondary_weight = 0.0;
+				bool use_reflect = false;
+				if (h.hasMesh()) {
+					const Mesh* m = h.getMesh();
+					const double metallic = m->getMetallic();
+					const double alpha = m->getAlpha();
+					if (metallic > 0.0) {
+						secondary_weight = metallic;
+						use_reflect = true;
+					} else if (alpha < 1.0) {
+						secondary_weight = std::max(0.0, 1.0 - alpha);
+						use_reflect = false; // transmit
+					}
+					if (secondary_weight > 0.0) {
+						// Build secondary ray: reflection or transmission
+						const HitVec3 ip = h.getIntersectionPoint();
+						RayVec3 sec_origin{ ip.x, ip.y, ip.z };
+						RayVec3 sec_dir = ray.getDirection(); // default: transmission uses original dir
+						if (use_reflect && h.hasReflectedDirection()) {
+							const HitVec3 r = h.getReflectedDirection();
+							sec_dir = RayVec3{ r.x, r.y, r.z };
+						}
+						// Offset origin slightly to avoid self-intersection acne
+						const double eps = 1e-6;
+						sec_origin.x += sec_dir.x * eps;
+						sec_origin.y += sec_dir.y * eps;
+						sec_origin.z += sec_dir.z * eps;
+						Ray secondary_ray(sec_origin, sec_dir);
+						Hit h2; (void)one_pass_intersection(secondary_ray, h2);
+						// For transmission, skip the first hit if it is the same mesh (exit surface)
+						if (!use_reflect && h2.hasMesh() && h.hasMesh() && h2.getMesh() == h.getMesh()) {
+							const HitVec3 ip2 = h2.getIntersectionPoint();
+							RayVec3 sec_origin2{ ip2.x + sec_dir.x * eps, ip2.y + sec_dir.y * eps, ip2.z + sec_dir.z * eps };
+							Ray secondary_ray2(sec_origin2, sec_dir);
+							Hit h3; (void)one_pass_intersection(secondary_ray2, h3);
+							h2 = h3;
+						}
+						const Pixel spx2 = this->shade(h2, secondary_ray);
+						// If secondary ray missed, don't darken the result for metals/transparency
+						const bool secondary_valid = h2.hasDistanceAlongRay() && h2.hasSurfaceNormal() && h2.hasIntersectionPoint();
+						const double w = secondary_valid ? secondary_weight : 0.0;
+						// Linear blend between primary and secondary based on effective weight
+						auto blend_channel = [&](unsigned char a, unsigned char b) -> unsigned char {
+							const double aa = static_cast<double>(a);
+							const double bb = static_cast<double>(b);
+							const double cc = (1.0 - w) * aa + w * bb;
+							const int ci = static_cast<int>(std::round(cc));
+							return static_cast<unsigned char>(std::clamp(ci, 0, 255));
+						};
+						spx.r = blend_channel(spx.r, spx2.r);
+						spx.g = blend_channel(spx.g, spx2.g);
+						spx.b = blend_channel(spx.b, spx2.b);
+					}
+				}
 
 				if (use_color) {
-					const double intensity = static_cast<double>(spx.r) / 255.0;
-					accum_intensity += intensity;
+					const double primary_int = static_cast<double>(spx.r) / 255.0;
+					accum_intensity += primary_int;
 				} else {
 					accum_r += static_cast<double>(spx.r);
 					accum_g += static_cast<double>(spx.g);
