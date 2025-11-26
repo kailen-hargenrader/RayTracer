@@ -17,10 +17,18 @@ void Image::resize(int w, int h) {
 
 void Image::setPixel(int x, int y, const Vec3& rgb) {
     if (x < 0 || y < 0 || x >= m_width || y >= m_height) return;
-    Vec3 c = Vec3::clamp01(rgb);
-    uint8_t r = static_cast<uint8_t>(std::round(c.x * 255.0f));
-    uint8_t g = static_cast<uint8_t>(std::round(c.y * 255.0f));
-    uint8_t b = static_cast<uint8_t>(std::round(c.z * 255.0f));
+	// Convert from linear to sRGB for perceptual display/output
+	auto linearToSrgb = [](float c) -> float {
+		c = std::max(0.0f, std::min(1.0f, c));
+		return (c <= 0.0031308f) ? (12.92f * c)
+			: (1.055f * std::pow(c, 1.0f / 2.4f) - 0.055f);
+	};
+	float r_srgb = linearToSrgb(rgb.x);
+	float g_srgb = linearToSrgb(rgb.y);
+	float b_srgb = linearToSrgb(rgb.z);
+	uint8_t r = static_cast<uint8_t>(std::round(r_srgb * 255.0f));
+	uint8_t g = static_cast<uint8_t>(std::round(g_srgb * 255.0f));
+	uint8_t b = static_cast<uint8_t>(std::round(b_srgb * 255.0f));
     size_t idx = (static_cast<size_t>(y) * static_cast<size_t>(m_width) + static_cast<size_t>(x)) * 3u;
     m_pixels[idx + 0] = r;
     m_pixels[idx + 1] = g;

@@ -143,10 +143,19 @@ Vec3 Texture::sample(float u, float v) const {
     int ix = std::max(0, std::min(m_width - 1, static_cast<int>(u * m_width)));
     int iy = std::max(0, std::min(m_height - 1, static_cast<int>((1.0f - v) * m_height)));
     size_t idx = (static_cast<size_t>(iy) * static_cast<size_t>(m_width) + static_cast<size_t>(ix)) * static_cast<size_t>(m_channels);
-    float r = static_cast<float>(m_pixels[idx + 0]) / 255.0f;
-    float g = static_cast<float>(m_pixels[idx + 1]) / 255.0f;
-    float b = static_cast<float>(m_pixels[idx + 2]) / 255.0f;
-    return {r, g, b};
+	float r_srgb = static_cast<float>(m_pixels[idx + 0]) / 255.0f;
+	float g_srgb = static_cast<float>(m_pixels[idx + 1]) / 255.0f;
+	float b_srgb = static_cast<float>(m_pixels[idx + 2]) / 255.0f;
+
+	// Convert from sRGB to linear for correct lighting computations
+	auto srgbToLinear = [](float c) -> float {
+		return (c <= 0.04045f) ? (c / 12.92f)
+			: std::pow((c + 0.055f) / 1.055f, 2.4f);
+	};
+	float r = srgbToLinear(r_srgb);
+	float g = srgbToLinear(g_srgb);
+	float b = srgbToLinear(b_srgb);
+	return {r, g, b};
 }
 
 } // namespace rt
