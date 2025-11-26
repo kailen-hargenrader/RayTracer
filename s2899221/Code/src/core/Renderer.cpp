@@ -41,6 +41,25 @@ static inline Vec3 saturate(const Vec3& v) {
 	return { saturate(v.x), saturate(v.y), saturate(v.z) };
 }
 
+// Sample a direction around 'axis' with a Phong-lobe distribution proportional to cos^n(theta).
+// 'exponent' is the Phong shininess exponent (n). u1,u2 are uniform randoms in [0,1).
+static inline Vec3 samplePhongLobe(const Vec3& axisNormalized, float exponent, float u1, float u2) {
+	// Build orthonormal basis (T,B,axis)
+	Vec3 w = axisNormalized.normalized();
+	Vec3 a = (std::fabs(w.x) > 0.99f) ? Vec3(0.0f, 1.0f, 0.0f) : Vec3(1.0f, 0.0f, 0.0f);
+	Vec3 v = Vec3::cross(w, a).normalized();
+	Vec3 u = Vec3::cross(v, w);
+	// Sample spherical coords
+	float cosTheta = std::pow(u1, 1.0f / (exponent + 1.0f));
+	float sinTheta = std::sqrt(std::max(0.0f, 1.0f - cosTheta * cosTheta));
+	float phi = 2.0f * 3.1415926535f * u2;
+	float x = std::cos(phi) * sinTheta;
+	float y = std::sin(phi) * sinTheta;
+	float z = cosTheta;
+	// Transform to world
+	return (u * x + v * y + w * z).normalized();
+}
+
 void Renderer::render(const Scene& scene, Image& outImage, const RenderOptions& opts) {
 	const int W = scene.camera.width();
 	const int H = scene.camera.height();
@@ -61,7 +80,7 @@ void Renderer::render(const Scene& scene, Image& outImage, const RenderOptions& 
 				float jx = (opts.samplesPerPixel > 1) ? uni(rng) : 0.5f;
 				float jy = (opts.samplesPerPixel > 1) ? uni(rng) : 0.5f;
 				Ray ray = scene.camera.generateRay(x, y, jx, jy);
-				TraceResult tr = traceRay(scene, ray, opts, 0);
+				TraceResult tr = traceRay(scene, ray, opts, 0, rng);
 				accum += tr.color;
 			}
 			float invSpp = 1.0f / static_cast<float>(std::max(1, opts.samplesPerPixel));
@@ -70,7 +89,7 @@ void Renderer::render(const Scene& scene, Image& outImage, const RenderOptions& 
 	}
 }
 
-Renderer::TraceResult Renderer::traceRay(const Scene& scene, const Ray& ray, const RenderOptions& opts, int depth) const {
+Renderer::TraceResult Renderer::traceRay(const Scene& scene, const Ray& ray, const RenderOptions& opts, int depth, std::mt19937& rng) const {
 	TraceResult result;
 	result.hit = false;
 	result.color = backgroundColor(ray, opts);
@@ -123,10 +142,40 @@ Renderer::TraceResult Renderer::traceRay(const Scene& scene, const Ray& ray, con
 
 		// Opaque: mix local with reflection
 		if (effectiveTransparency <= 1e-3f) {
-			Vec3 Rdir = reflect(I, N).normalized();
-			Ray rRay(hit.position + N * kEpsilon * 4.0f, Rdir);
-			TraceResult rTr = traceRay(scene, rRay, opts, depth + 1);
-			finalColor = (1.0f - F) * local + F * rTr.color;
+			// Roughness-driven distributed reflection sampling
+			const float rough = saturate(mat.roughness);
+			// Map roughness to shininess exponent (consistent with local BRDF)
+			const float gloss = (1.0f - rough);
+			const float shininess = 2.0f + gloss * gloss * 256.0f;
+			// Determine number of samples as a function of roughness
+			const int maxRS = std::max(1, opts.roughnessMaxSamples);
+			const int rSamples = (maxRS <= 1) ? 1 : std::max(1, static_cast<int>(1 + rough * static_cast<float>(maxRS - 1)));
+
+			Vec3 reflAccum(0.0f, 0.0f, 0.0f);
+			std::uniform_real_distribution<float> uni(0.0f, 1.0f);
+			// Perfect reflection axis
+			const Vec3 Raxis = reflect(I, N).normalized();
+			for (int i = 0; i < rSamples; ++i) {
+				Vec3 dir;
+				if (rSamples == 1 || rough <= 1e-4f) {
+					dir = Raxis;
+				} else {
+					// Sample a Phong lobe around Raxis; higher roughness -> lower shininess -> wider lobe
+					const float u1 = uni(rng);
+					const float u2 = uni(rng);
+					dir = samplePhongLobe(Raxis, shininess, u1, u2);
+					// Ensure we are not sampling below the surface due to numerical issues
+					if (Vec3::dot(dir, N) < 0.0f) {
+						dir = (dir - N * (2.0f * Vec3::dot(dir, N))).normalized();
+					}
+				}
+				Ray rRay(hit.position + N * kEpsilon * 4.0f, dir);
+				TraceResult rTr = traceRay(scene, rRay, opts, depth + 1, rng);
+				reflAccum += rTr.color;
+			}
+			const float invRS = 1.0f / static_cast<float>(rSamples);
+			Vec3 reflAvg = reflAccum * invRS;
+			finalColor = (1.0f - F) * local + F * reflAvg;
 		} else {
 			// Refraction using Snell's law; prevent whitening on metals by scaling transmission
 			bool frontFace = (Vec3::dot(I, N) < 0.0f);
@@ -140,12 +189,35 @@ Renderer::TraceResult Renderer::traceRay(const Scene& scene, const Ray& ray, con
 			Vec3 reflCol(0.0f, 0.0f, 0.0f);
 			Vec3 refrCol(0.0f, 0.0f, 0.0f);
 
-			Ray rRay(hit.position + n * kEpsilon * 4.0f, Rdir);
-			reflCol = traceRay(scene, rRay, opts, depth + 1).color;
+			// For simplicity, apply roughness blur only to reflection lobe here as well.
+			const float rough = saturate(mat.roughness);
+			const float gloss = (1.0f - rough);
+			const float shininess = 2.0f + gloss * gloss * 256.0f;
+			const int maxRS = std::max(1, opts.roughnessMaxSamples);
+			const int rSamples = (maxRS <= 1) ? 1 : std::max(1, static_cast<int>(1 + rough * static_cast<float>(maxRS - 1)));
+			std::uniform_real_distribution<float> uni(0.0f, 1.0f);
+			if (rSamples <= 1 || rough <= 1e-4f) {
+				Ray rRay(hit.position + n * kEpsilon * 4.0f, Rdir);
+				reflCol = traceRay(scene, rRay, opts, depth + 1, rng).color;
+			} else {
+				Vec3 Raxis = Rdir;
+				Vec3 acc(0.0f, 0.0f, 0.0f);
+				for (int i = 0; i < rSamples; ++i) {
+					const float u1 = uni(rng);
+					const float u2 = uni(rng);
+					Vec3 dir = samplePhongLobe(Raxis, shininess, u1, u2);
+					if (Vec3::dot(dir, n) < 0.0f) {
+						dir = (dir - n * (2.0f * Vec3::dot(dir, n))).normalized();
+					}
+					Ray rRay(hit.position + n * kEpsilon * 4.0f, dir);
+					acc += traceRay(scene, rRay, opts, depth + 1, rng).color;
+				}
+				reflCol = acc * (1.0f / static_cast<float>(rSamples));
+			}
 
 			if (hasRefract) {
 				Ray tRay(hit.position + Tdir * kEpsilon * 8.0f, Tdir.normalized());
-				refrCol = traceRay(scene, tRay, opts, depth + 1).color;
+				refrCol = traceRay(scene, tRay, opts, depth + 1, rng).color;
 			}
 
 			Vec3 specMix = hasRefract ? (F * reflCol + (1.0f - F) * refrCol) : reflCol;

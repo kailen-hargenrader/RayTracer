@@ -10,7 +10,7 @@
 using namespace rt;
 
 static void printUsage() {
-	std::cout << "Usage: rt_render <scene.json> <out.ppm> [--bvh] [--spp N] [--maxDepth N] [--minThroughput f] [--no-rr]\n";
+	std::cout << "Usage: rt_render <scene.json> <out.ppm> [--bvh] [--spp N] [--maxDepth N] [--roughSamples N] [--minThroughput f] [--no-rr]\n";
 }
 
 int main(int argc, char** argv) {
@@ -26,6 +26,7 @@ int main(int argc, char** argv) {
 	opts.useBVH = false;
 	opts.samplesPerPixel = 1;
 	opts.maxDepth = 1;
+	opts.roughnessMaxSamples = 1;
 	opts.useRussianRoulette = false;
 	opts.minThroughput = 0.02f;
 
@@ -39,6 +40,8 @@ int main(int argc, char** argv) {
 			opts.samplesPerPixel = std::max(1, std::atoi(argv[++i]));
 		} else if (a == "--maxDepth" && i + 1 < argc) {
 			opts.maxDepth = std::max(1, std::atoi(argv[++i]));
+		} else if (a == "--roughSamples" && i + 1 < argc) {
+			opts.roughnessMaxSamples = std::max(1, std::atoi(argv[++i]));
 		} else if (a == "--minThroughput" && i + 1 < argc) {
 			opts.minThroughput = std::max(0.0f, static_cast<float>(std::atof(argv[++i])));
 		} else {
