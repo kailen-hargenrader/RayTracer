@@ -114,6 +114,7 @@ Renderer::TraceResult Renderer::traceRay(const Scene& scene, const Ray& ray, con
 		const float alpha = saturate(mat.alpha);
 		const float transparency = 1.0f - alpha;
 		const float ior = std::max(1.0f, mat.ior);
+		const float effectiveTransparency = transparency;
 
 		// Fresnel term (dielectric); for metals we bias toward reflection
 		const float cosTheta = std::max(0.0f, -Vec3::dot(I, N));
@@ -121,17 +122,34 @@ Renderer::TraceResult Renderer::traceRay(const Scene& scene, const Ray& ray, con
 		F = F * (1.0f - metallic) + 1.0f * metallic; // metals reflect nearly all
 
 		// Opaque: mix local with reflection
-		if (transparency <= 1e-3f) {
+		if (effectiveTransparency <= 1e-3f) {
 			Vec3 Rdir = reflect(I, N).normalized();
 			Ray rRay(hit.position + N * kEpsilon * 4.0f, Rdir);
 			TraceResult rTr = traceRay(scene, rRay, opts, depth + 1);
 			finalColor = (1.0f - F) * local + F * rTr.color;
 		} else {
-			// Simplest transparency: continue the ray straight through without bending
-			Vec3 passDir = I;
-			Ray passRay(hit.position + passDir * kEpsilon * 8.0f, passDir);
-			Vec3 passCol = traceRay(scene, passRay, opts, depth + 1).color;
-			finalColor = alpha * local + transparency * passCol;
+			// Refraction using Snell's law; prevent whitening on metals by scaling transmission
+			bool frontFace = (Vec3::dot(I, N) < 0.0f);
+			Vec3 n = frontFace ? N : (N * -1.0f);
+			float eta = frontFace ? (1.0f / ior) : ior; // eta_i/eta_t
+
+			Vec3 Tdir;
+			bool hasRefract = refract(I, n, eta, Tdir);
+
+			Vec3 Rdir = reflect(I, n).normalized();
+			Vec3 reflCol(0.0f, 0.0f, 0.0f);
+			Vec3 refrCol(0.0f, 0.0f, 0.0f);
+
+			Ray rRay(hit.position + n * kEpsilon * 4.0f, Rdir);
+			reflCol = traceRay(scene, rRay, opts, depth + 1).color;
+
+			if (hasRefract) {
+				Ray tRay(hit.position + Tdir * kEpsilon * 8.0f, Tdir.normalized());
+				refrCol = traceRay(scene, tRay, opts, depth + 1).color;
+			}
+
+			Vec3 specMix = hasRefract ? (F * reflCol + (1.0f - F) * refrCol) : reflCol;
+			finalColor = alpha * local + effectiveTransparency * specMix;
 		}
 	}
 
