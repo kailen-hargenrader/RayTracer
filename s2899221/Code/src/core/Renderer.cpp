@@ -148,7 +148,8 @@ Vec3 Renderer::shadeBlinnPhong(const Scene& scene, const Hit& hit, const Materia
 	// Base color: sample texture if available, otherwise use constant
 	Vec3 baseColor = material.baseColor;
 	if (material.baseColorTexture && material.baseColorTexture->isValid()) {
-		baseColor = material.baseColorTexture->sample(hit.uv.x, hit.uv.y);
+		// Blender-style UVs appear swapped relative to our sampling; use (v, u)
+		baseColor = material.baseColorTexture->sample(hit.uv.y, hit.uv.x);
 	}
 	// Diffuse color and specular color based on metallic
 	const float metallic = saturate(material.metallic);

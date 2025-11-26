@@ -35,9 +35,9 @@ bool Sphere::intersect(const Ray& rayWorld, float tMin, float tMax, Hit& hit) co
         hit.ray = rayWorld;
         hit.position = pWorld;
         hit.setFaceNormal(outwardNormalWorld);
-        // Optional UV for sphere
+        // UV for sphere: Blender-style (v increases upward)
         float u = 0.5f + std::atan2(outwardNormalObj.z, outwardNormalObj.x) / (2.0f * 3.1415926535f);
-        float v = 0.5f - std::asin(outwardNormalObj.y) / 3.1415926535f;
+        float v = 0.5f + std::asin(outwardNormalObj.y) / 3.1415926535f;
         hit.uv = {u, v};
         return true;
     };
