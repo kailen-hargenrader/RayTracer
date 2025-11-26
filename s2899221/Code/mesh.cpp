@@ -11,6 +11,39 @@
 
 // JSON-like parsing helpers are implemented in utils.{h,cpp}
 
+// --------- Common material sampling ----------
+static inline unsigned char clamp_u8_from_unit(double x) {
+    if (x <= 0.0) return 0;
+    if (x >= 1.0) return 255;
+    return static_cast<unsigned char>(std::round(x * 255.0));
+}
+
+Pixel Mesh::evaluate_albedo(const Hit& hit) const {
+    // If we have a texture and UV, sample it, else fall back to solid albedo color
+    if (m_albedoTexture && hit.hasUV()) {
+        const int w = m_albedoTexture->width();
+        const int h = m_albedoTexture->height();
+        if (w > 0 && h > 0) {
+            double u = hit.getU();
+            double v = hit.getV();
+            // Wrap repeat
+            u = u - std::floor(u);
+            v = v - std::floor(v);
+            // Nearest sampling
+            int x = static_cast<int>(std::floor(u * static_cast<double>(w - 1)));
+            int y = static_cast<int>(std::floor(v * static_cast<double>(h - 1)));
+            if (x < 0) x = 0; if (x >= w) x = w - 1;
+            if (y < 0) y = 0; if (y >= h) y = h - 1;
+            return m_albedoTexture->getPixel(x, y);
+        }
+    }
+    Pixel p;
+    p.r = clamp_u8_from_unit(m_albedoR);
+    p.g = clamp_u8_from_unit(m_albedoG);
+    p.b = clamp_u8_from_unit(m_albedoB);
+    return p;
+}
+
 // ---------- Cube ----------
 Cube::Cube() : m_translation{0,0,0}, m_rotation{0,0,0}, m_scale{1.0, 1.0, 1.0} {}
 Cube::Cube(const Float3& translation, const EulerAngles& rotation, const Float3& scale)
@@ -44,6 +77,8 @@ std::vector<Cube> Cube::read_from_json(const std::string& class_block) {
         }
         // material { alpha, metallic, roughness }
         double alpha = 1.0, metallic = 0.0, roughness = 0.5, ior = 1.5;
+        double alb_r = 1.0, alb_g = 1.0, alb_b = 1.0;
+        std::string alb_tex_path;
         {
             std::string mat_block;
             if (util_json::extract_object_block(sub, "material", mat_block)) {
@@ -51,13 +86,29 @@ std::vector<Cube> Cube::read_from_json(const std::string& class_block) {
                 util_json::parse_number(mat_block, "metallic", metallic);
                 util_json::parse_number(mat_block, "roughness", roughness);
                 util_json::parse_number(mat_block, "ior", ior);
+                // Optional albedo color and texture
+                util_json::parse_vec3(mat_block, "albedo", alb_r, alb_g, alb_b);
+                {
+                    std::regex rx("\\\"albedo_texture_ppm\\\"\\s*:\\s*\\\"([^\\\"]*)\\\"");
+                    std::smatch m;
+                    if (std::regex_search(mat_block, m, rx)) {
+                        alb_tex_path = m[1].str();
+                    }
+                }
             }
         }
 
         Cube c(tr, rot, scale);
         c.setMaterial(alpha, metallic, roughness);
         c.setIndexOfRefraction(ior);
-        result.emplace_back(c);
+        c.setAlbedo(alb_r, alb_g, alb_b);
+        if (!alb_tex_path.empty()) {
+            try {
+                std::unique_ptr<Image> tex(new Image(alb_tex_path));
+                c.setAlbedoTexture(std::move(tex));
+            } catch (...) { /* ignore texture load errors */ }
+        }
+        result.emplace_back(std::move(c));
     }
     return result;
 }
@@ -207,6 +258,24 @@ bool Cube::intersect(const Ray& ray, Hit& hit) const {
     const double dist_world = (d_len > 1e-15) ? (dx*d_world[0] + dy*d_world[1] + dz*d_world[2]) / d_len
                                               : std::sqrt(dx*dx + dy*dy + dz*dz);
     hit.setDistanceAlongRay(dist_world);
+    // UV mapping per face using local coordinates in [-1,1]
+    {
+        double u = 0.0, v = 0.0;
+        if (std::abs(n_local[0]) > 0.5) {
+            // ±X face: use z (u) and y (v)
+            u = 0.5 * (p_local[2] + 1.0);
+            v = 0.5 * (p_local[1] + 1.0);
+        } else if (std::abs(n_local[1]) > 0.5) {
+            // ±Y face: use x (u) and z (v)
+            u = 0.5 * (p_local[0] + 1.0);
+            v = 0.5 * (p_local[2] + 1.0);
+        } else {
+            // ±Z face: use x (u) and y (v)
+            u = 0.5 * (p_local[0] + 1.0);
+            v = 0.5 * (p_local[1] + 1.0);
+        }
+        hit.setUV(u, v);
+    }
     return true;
 }
 
@@ -261,6 +330,8 @@ std::vector<Cylinder> Cylinder::read_from_json(const std::string& class_block) {
         { double sx=1,sy=1,sz=1; if (util_json::parse_vec3(sub, "scale", sx, sy, sz)) scale = Float3{ sx, sy, sz }; }
         // material { alpha, metallic, roughness }
         double alpha = 1.0, metallic = 0.0, roughness = 0.5, ior = 1.5;
+        double alb_r = 1.0, alb_g = 1.0, alb_b = 1.0;
+        std::string alb_tex_path;
         {
             std::string mat_block;
             if (util_json::extract_object_block(sub, "material", mat_block)) {
@@ -268,12 +339,25 @@ std::vector<Cylinder> Cylinder::read_from_json(const std::string& class_block) {
                 util_json::parse_number(mat_block, "metallic", metallic);
                 util_json::parse_number(mat_block, "roughness", roughness);
                 util_json::parse_number(mat_block, "ior", ior);
+                util_json::parse_vec3(mat_block, "albedo", alb_r, alb_g, alb_b);
+                std::regex rx("\\\"albedo_texture_ppm\\\"\\s*:\\s*\\\"([^\\\"]*)\\\"");
+                std::smatch m;
+                if (std::regex_search(mat_block, m, rx)) {
+                    alb_tex_path = m[1].str();
+                }
             }
         }
         Cylinder c(tr, rot, scale);
         c.setMaterial(alpha, metallic, roughness);
         c.setIndexOfRefraction(ior);
-        result.emplace_back(c);
+        c.setAlbedo(alb_r, alb_g, alb_b);
+        if (!alb_tex_path.empty()) {
+            try {
+                std::unique_ptr<Image> tex(new Image(alb_tex_path));
+                c.setAlbedoTexture(std::move(tex));
+            } catch (...) {}
+        }
+        result.emplace_back(std::move(c));
     }
     return result;
 }
@@ -409,6 +493,23 @@ bool Cylinder::intersect(const Ray& ray, Hit& hit) const {
     const double dist_world = (d_len > 1e-15) ? (dx*d_world[0] + dy*d_world[1] + dz*d_world[2]) / d_len
                                               : std::sqrt(dx*dx + dy*dy + dz*dz);
     hit.setDistanceAlongRay(dist_world);
+    // UVs: if side hit (nz==0), cylindrical unwrap; if cap, planar mapping
+    {
+        const double pi = 3.14159265358979323846;
+        double u = 0.0, v = 0.0;
+        if (std::abs(best_n_local[2]) < 0.5) {
+            // Side
+            double theta = std::atan2(best_p[1], best_p[0]); // [-pi, pi]
+            u = (theta + pi) / (2.0 * pi);
+            // z in [-1,1] -> v in [0,1]
+            v = 0.5 * (best_p[2] + 1.0);
+        } else {
+            // Cap: map local x,y in [-1,1] to [0,1]
+            u = 0.5 * (best_p[0] + 1.0);
+            v = 0.5 * (best_p[1] + 1.0);
+        }
+        hit.setUV(u, v);
+    }
     return true;
 }
 
@@ -456,6 +557,8 @@ std::vector<Sphere> Sphere::read_from_json(const std::string& class_block) {
         double sx=1, sy=1, sz=1; if (util_json::parse_vec3(sub, "scale", sx, sy, sz)) { scale = Float3{ sx, sy, sz }; }
         // material { alpha, metallic, roughness }
         double alpha = 1.0, metallic = 0.0, roughness = 0.5, ior = 1.5;
+        double alb_r = 1.0, alb_g = 1.0, alb_b = 1.0;
+        std::string alb_tex_path;
         {
             std::string mat_block;
             if (util_json::extract_object_block(sub, "material", mat_block)) {
@@ -463,12 +566,25 @@ std::vector<Sphere> Sphere::read_from_json(const std::string& class_block) {
                 util_json::parse_number(mat_block, "metallic", metallic);
                 util_json::parse_number(mat_block, "roughness", roughness);
                 util_json::parse_number(mat_block, "ior", ior);
+                util_json::parse_vec3(mat_block, "albedo", alb_r, alb_g, alb_b);
+                std::regex rx("\\\"albedo_texture_ppm\\\"\\s*:\\s*\\\"([^\\\"]*)\\\"");
+                std::smatch m;
+                if (std::regex_search(mat_block, m, rx)) {
+                    alb_tex_path = m[1].str();
+                }
             }
         }
         Sphere s(loc, scale);
         s.setMaterial(alpha, metallic, roughness);
         s.setIndexOfRefraction(ior);
-        result.emplace_back(s);
+        s.setAlbedo(alb_r, alb_g, alb_b);
+        if (!alb_tex_path.empty()) {
+            try {
+                std::unique_ptr<Image> tex(new Image(alb_tex_path));
+                s.setAlbedoTexture(std::move(tex));
+            } catch (...) {}
+        }
+        result.emplace_back(std::move(s));
     }
     return result;
 }
@@ -550,6 +666,17 @@ bool Sphere::intersect(const Ray& ray, Hit& hit) const {
     const double dist_world = (d_len > 1e-15) ? (dx*d_world[0] + dy*d_world[1] + dz*d_world[2]) / d_len
                                               : std::sqrt(dx*dx + dy*dy + dz*dz);
     hit.setDistanceAlongRay(dist_world);
+    // UV for sphere: spherical mapping based on local position
+    {
+        double px = p_local[0], py = p_local[1], pz = p_local[2];
+        // Normalize to unit sphere for robustness
+        const double plen = std::sqrt(px*px + py*py + pz*pz);
+        if (plen > 1e-15) { px /= plen; py /= plen; pz /= plen; }
+        const double pi = 3.14159265358979323846;
+        double u = 0.5 + std::atan2(pz, px) / (2.0 * pi);
+        double v = 0.5 - std::asin(std::clamp(py, -1.0, 1.0)) / pi;
+        hit.setUV(u, v);
+    }
     return true;
 }
 
@@ -621,6 +748,8 @@ std::vector<Plane> Plane::read_from_json(const std::string& class_block) {
         if (!corners.empty()) {
             // material { alpha, metallic, roughness }
             double alpha = 1.0, metallic = 0.0, roughness = 0.5, ior = 1.5;
+            double alb_r = 1.0, alb_g = 1.0, alb_b = 1.0;
+            std::string alb_tex_path;
             {
                 std::string mat_block;
                 if (util_json::extract_object_block(sub, "material", mat_block)) {
@@ -628,12 +757,25 @@ std::vector<Plane> Plane::read_from_json(const std::string& class_block) {
                     util_json::parse_number(mat_block, "metallic", metallic);
                     util_json::parse_number(mat_block, "roughness", roughness);
                     util_json::parse_number(mat_block, "ior", ior);
+                    util_json::parse_vec3(mat_block, "albedo", alb_r, alb_g, alb_b);
+                    std::regex rx("\\\"albedo_texture_ppm\\\"\\s*:\\s*\\\"([^\\\"]*)\\\"");
+                    std::smatch m;
+                    if (std::regex_search(mat_block, m, rx)) {
+                        alb_tex_path = m[1].str();
+                    }
                 }
             }
             Plane p(corners);
             p.setMaterial(alpha, metallic, roughness);
             p.setIndexOfRefraction(ior);
-            result.emplace_back(p);
+            p.setAlbedo(alb_r, alb_g, alb_b);
+            if (!alb_tex_path.empty()) {
+                try {
+                    std::unique_ptr<Image> tex(new Image(alb_tex_path));
+                    p.setAlbedoTexture(std::move(tex));
+                } catch (...) {}
+            }
+            result.emplace_back(std::move(p));
         }
     }
     return result;
@@ -772,6 +914,8 @@ bool Plane::intersect(const Ray& ray, Hit& hit) const {
     const double dist_world = (d_len > 1e-15) ? (dx*d_world[0] + dy*d_world[1] + dz*d_world[2]) / d_len
                                               : std::sqrt(dx*dx + dy*dy + dz*dz);
     hit.setDistanceAlongRay(dist_world);
+    // Set UV from local coordinates (u,v) already computed
+    hit.setUV(u, v);
     return true;
 }
 

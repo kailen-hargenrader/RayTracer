@@ -97,6 +97,8 @@ Hit::Hit(
 	, m_surfaceNormal(surfaceNormal)
 	, m_reflectedDirection(reflectedDirection)
 	, m_mesh(mesh)
+	, m_u(std::nullopt)
+	, m_v(std::nullopt)
 {}
 
 const HitVec3& Hit::getIntersectionPoint() const {
@@ -136,6 +138,10 @@ bool Hit::hasSurfaceNormal() const { return m_surfaceNormal.has_value(); }
 bool Hit::hasReflectedDirection() const { return m_reflectedDirection.has_value(); }
 bool Hit::hasMesh() const { return m_mesh.has_value(); }
 
+void Hit::setUV(double u, double v) { m_u = u; m_v = v; }
+bool Hit::hasUV() const { return m_u.has_value() && m_v.has_value(); }
+double Hit::getU() const { if (!m_u) throwUnset("u"); return *m_u; }
+double Hit::getV() const { if (!m_v) throwUnset("v"); return *m_v; }
 // ---------------- Image ----------------
 
 static void skipComments(std::istream& in) {

@@ -30,7 +30,7 @@ public:
     /** Intersect a single ray against all meshes; return the closest hit if any. */
     bool one_pass_intersection(const Ray& ray, Hit& out_hit) const;
 
-		/** Blinn-Phong shading (grayscale for now). */
+		/** Blinn-Phong shading with albedo from material/texture. */
 		Pixel shade(const Hit& hit, const Ray& view_ray) const;
 
 		/**
@@ -38,13 +38,7 @@ public:
 		 * Generates one ray per pixel for the specified camera id and writes a PPM image.
 		 * Returns true on success (camera found and file written).
 		 */
-		bool render_unaccelerated_ppm(const std::string& camera_id, const std::string& output_filepath) const;
-
-		/**
-		 * Render variant that modulates a provided color PPM by computed intensity.
-		 * If color image resolution mismatches, falls back to grayscale shading.
-		 */
-		bool render_unaccelerated_ppm(const std::string& camera_id, const std::string& output_filepath, const std::string& color_ppm_path, int samples_per_pixel = 1) const;
+		bool render_unaccelerated_ppm(const std::string& camera_id, const std::string& output_filepath, int samples_per_pixel = 1, int max_scatters = 2, double min_scatter_intensity = 0.0) const;
 
     /** Access flat list of scene mesh pointers (for acceleration structures). */
     const std::vector<const Mesh*>& get_scene_mesh_ptrs() const { return m_scene_mesh_ptrs; }
@@ -65,6 +59,9 @@ private:
 
     // Helper to rebuild pointer list after loading
     void rebuild_mesh_ptrs();
+
+	// Recursive ray tracing helper used by render_unaccelerated_ppm
+	Pixel trace_ray_recursive(const Ray& ray, int depth, int max_scatters, double min_scatter_intensity) const;
 };
 
 /**

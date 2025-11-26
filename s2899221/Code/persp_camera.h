@@ -50,6 +50,8 @@ public:
 
     /** Update orientation from camera location and forward direction. */
     void updateRotationMatrix(const Vec3& cam_pos, const Vec3& cam_dir);
+	/** Update orientation from camera location, forward and up directions (preserving roll). */
+	void updateRotationMatrix(const Vec3& cam_pos, const Vec3& cam_dir, const Vec3& cam_up);
 
     /** Project a world point to pixel coordinates. Returns false if behind camera. */
     bool worldToPixel(const Vec3& point_world, int& pixel_x, int& pixel_y);

@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <iosfwd>
+#include <memory>
 
 // Forward declarations to avoid including full headers here
 class Hit;
@@ -15,6 +16,10 @@ class Mesh {
 public:
     Mesh() : m_alpha(1.0), m_metallic(0.0), m_roughness(0.5), m_ior(1.5) {}
     virtual ~Mesh() = default;
+    Mesh(const Mesh&) = delete;
+    Mesh& operator=(const Mesh&) = delete;
+    Mesh(Mesh&&) noexcept = default;
+    Mesh& operator=(Mesh&&) noexcept = default;
 
     /** Write a human-readable representation to the provided stream. */
     virtual void write_to_console(std::ostream& out) const = 0;
@@ -37,11 +42,22 @@ public:
     void setIndexOfRefraction(double ior) { m_ior = ior; }
     double getIndexOfRefraction() const { return m_ior; }
 
+    // Albedo parameters (from Blender export)
+    void setAlbedo(double r, double g, double b) { m_albedoR = r; m_albedoG = g; m_albedoB = b; }
+    void setAlbedoTexture(std::unique_ptr<class Image> texture) { m_albedoTexture = std::move(texture); }
+    /** Evaluate albedo at the given hit (uses UV if available; falls back to solid). */
+    virtual struct Pixel evaluate_albedo(const Hit& hit) const;
+
 protected:
     double m_alpha;
     double m_metallic;
     double m_roughness;
     double m_ior;
+    // Albedo as linear RGB [0..1]
+    double m_albedoR{1.0};
+    double m_albedoG{1.0};
+    double m_albedoB{1.0};
+    std::unique_ptr<class Image> m_albedoTexture;
 };
 
 /** Simple 3D point/vector container used by mesh shapes. */
@@ -63,6 +79,10 @@ class Cube : public Mesh {
 public:
     Cube();
     Cube(const Float3& translation, const EulerAngles& rotation, const Float3& scale);
+    Cube(const Cube&) = delete;
+    Cube& operator=(const Cube&) = delete;
+    Cube(Cube&&) noexcept = default;
+    Cube& operator=(Cube&&) noexcept = default;
 
     static std::vector<Cube> read_from_json(const std::string& class_block);
     void write_to_console(std::ostream& out) const override;
@@ -85,6 +105,10 @@ class Cylinder : public Mesh {
 public:
     Cylinder();
     Cylinder(const Float3& translation, const EulerAngles& rotation, const Float3& scale);
+    Cylinder(const Cylinder&) = delete;
+    Cylinder& operator=(const Cylinder&) = delete;
+    Cylinder(Cylinder&&) noexcept = default;
+    Cylinder& operator=(Cylinder&&) noexcept = default;
 
     static std::vector<Cylinder> read_from_json(const std::string& class_block);
     void write_to_console(std::ostream& out) const override;
@@ -106,6 +130,10 @@ class Sphere : public Mesh {
 public:
     Sphere();
     Sphere(const Float3& location, const Float3& scale);
+    Sphere(const Sphere&) = delete;
+    Sphere& operator=(const Sphere&) = delete;
+    Sphere(Sphere&&) noexcept = default;
+    Sphere& operator=(Sphere&&) noexcept = default;
 
     static std::vector<Sphere> read_from_json(const std::string& class_block);
     void write_to_console(std::ostream& out) const override;
@@ -123,6 +151,10 @@ class Plane : public Mesh {
 public:
     Plane();
     explicit Plane(const std::vector<Float3>& corners);
+    Plane(const Plane&) = delete;
+    Plane& operator=(const Plane&) = delete;
+    Plane(Plane&&) noexcept = default;
+    Plane& operator=(Plane&&) noexcept = default;
 
     static std::vector<Plane> read_from_json(const std::string& class_block);
     void write_to_console(std::ostream& out) const override;
@@ -139,6 +171,10 @@ class BoundingBox : public Mesh {
 public:
     BoundingBox();
     BoundingBox(const Float3& bmin, const Float3& bmax);
+    BoundingBox(const BoundingBox&) = delete;
+    BoundingBox& operator=(const BoundingBox&) = delete;
+    BoundingBox(BoundingBox&&) noexcept = default;
+    BoundingBox& operator=(BoundingBox&&) noexcept = default;
 
     void write_to_console(std::ostream& out) const override;
     bool intersect(const Ray& ray, Hit& hit) const override;

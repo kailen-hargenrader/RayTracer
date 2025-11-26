@@ -46,24 +46,68 @@ void Camera::updateRotationMatrix(const Vec3& cam_pos, const Vec3& cam_dir) {
     }
 }
 
+void Camera::updateRotationMatrix(const Vec3& cam_pos, const Vec3& cam_dir, const Vec3& cam_up) {
+    position = cam_pos;
+    Vec3 forward = cam_dir.normalized();
+    // Use provided up to preserve roll, but re-orthonormalize
+    Vec3 up_guess = cam_up.normalized();
+    // If up is degenerate or parallel to forward, fall back to world-up
+    if (up_guess.length() < 1e-6 || std::abs(forward.x*up_guess.x + forward.y*up_guess.y + forward.z*up_guess.z) > 0.999) {
+        updateRotationMatrix(cam_pos, cam_dir);
+        return;
+    }
+    Vec3 right = cross(forward, up_guess).normalized();
+    Vec3 up = cross(right, forward);
+    for (int i=0; i<3; ++i) {
+        rotation[i][0] = (&right.x)[i];
+        rotation[i][1] = (&up.x)[i];
+        rotation[i][2] = (&forward.x)[i];
+    }
+}
 bool Camera::worldToPixel(const Vec3& point_world, int& pixel_x, int& pixel_y) {
     Vec3 vec = point_world - position;
     double Xc = rotation[0][0]*vec.x + rotation[1][0]*vec.y + rotation[2][0]*vec.z;
     double Yc = rotation[0][1]*vec.x + rotation[1][1]*vec.y + rotation[2][1]*vec.z;
     double Zc = rotation[0][2]*vec.x + rotation[1][2]*vec.y + rotation[2][2]*vec.z;
     if (Zc <= 0) return false;
+    // Match Blender's sensor fit behavior: fit horizontally if image aspect >= sensor aspect, else fit vertically
+    const double aspect_img = static_cast<double>(image_width_px) / static_cast<double>(image_height_px);
+    const double aspect_sensor = (sensor_height_mm > 0.0) ? (sensor_width_mm / sensor_height_mm) : aspect_img;
+    double eff_w = sensor_width_mm;
+    double eff_h = sensor_height_mm;
+    if (aspect_img >= aspect_sensor) {
+        // Horizontal fit: width fixed, height derived from image aspect
+        eff_w = sensor_width_mm;
+        eff_h = eff_w / aspect_img;
+    } else {
+        // Vertical fit: height fixed, width derived
+        eff_h = sensor_height_mm;
+        eff_w = eff_h * aspect_img;
+    }
     double x_sensor = focal_length_mm * (Xc / Zc);
     double y_sensor = focal_length_mm * (Yc / Zc);
-    pixel_x = static_cast<int>(((x_sensor / sensor_width_mm) + 0.5) * image_width_px);
-    pixel_y = static_cast<int>((1.0 - ((y_sensor / sensor_height_mm) + 0.5)) * image_height_px);
+    pixel_x = static_cast<int>(((x_sensor / eff_w) + 0.5) * image_width_px);
+    pixel_y = static_cast<int>((1.0 - ((y_sensor / eff_h) + 0.5)) * image_height_px);
     return true;
 }
 
 void Camera::pixelToRay(double pixel_x, double pixel_y, Vec3& ray_origin, Vec3& ray_direction) const {
     const double nx = pixel_x / static_cast<double>(image_width_px);
     const double ny = pixel_y / static_cast<double>(image_height_px);
-    const double x_sensor = sensor_width_mm * (nx - 0.5);
-    const double y_sensor = sensor_height_mm * (0.5 - ny);
+    // Effective sensor size to match Blender's sensor fit rules
+    const double aspect_img = static_cast<double>(image_width_px) / static_cast<double>(image_height_px);
+    const double aspect_sensor = (sensor_height_mm > 0.0) ? (sensor_width_mm / sensor_height_mm) : aspect_img;
+    double eff_w = sensor_width_mm;
+    double eff_h = sensor_height_mm;
+    if (aspect_img >= aspect_sensor) {
+        eff_w = sensor_width_mm;
+        eff_h = eff_w / aspect_img;
+    } else {
+        eff_h = sensor_height_mm;
+        eff_w = eff_h * aspect_img;
+    }
+    const double x_sensor = eff_w * (nx - 0.5);
+    const double y_sensor = eff_h * (0.5 - ny);
     const Vec3 dir_cam(x_sensor, y_sensor, focal_length_mm);
     Vec3 dir_world;
     dir_world.x = rotation[0][0]*dir_cam.x + rotation[0][1]*dir_cam.y + rotation[0][2]*dir_cam.z;

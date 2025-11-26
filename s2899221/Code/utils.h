@@ -96,12 +96,20 @@ public:
 	bool hasReflectedDirection() const;
 	bool hasMesh() const;
 
+	// UV coordinates on the surface (optional, [0,1] range typically)
+	void setUV(double u, double v);
+	bool hasUV() const;
+	double getU() const;
+	double getV() const;
+
 private:
 	std::optional<HitVec3> m_intersectionPoint;
 	std::optional<double> m_distanceAlongRay;
 	std::optional<HitVec3> m_surfaceNormal;
 	std::optional<HitVec3> m_reflectedDirection;
 	std::optional<const Mesh*> m_mesh;
+	std::optional<double> m_u;
+	std::optional<double> m_v;
 
 	[[noreturn]] static void throwUnset(const char* name) {
 		throw std::runtime_error(std::string("Hit: ") + name + " is unset");

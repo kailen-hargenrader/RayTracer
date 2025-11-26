@@ -25,11 +25,103 @@ def list3_to_dict(v):
 def vec2_to_dict(v):
     return {"x": int(v[0]), "y": int(v[1])}
 
+def _ensure_dir(dir_path: str) -> None:
+    if not os.path.isdir(dir_path):
+        os.makedirs(dir_path, exist_ok=True)
+
+def _to_u8(x: float) -> int:
+    if x is None:
+        return 0
+    if x < 0.0:
+        x = 0.0
+    if x > 1.0:
+        x = 1.0
+    return int(round(x * 255.0))
+
+# ------- CACHES TO AVOID RE-DOING WORK -------
+_material_params_cache = {}
+_image_to_ppm_cache = {}
+
+def _image_cache_key(img) -> str:
+    # Prefer filepath key so duplicates of the same image datablock dedupe
+    try:
+        fp = getattr(img, "filepath_raw", None) or getattr(img, "filepath", None)
+        if fp:
+            return str(fp)
+    except Exception:
+        pass
+    try:
+        return str(getattr(img, "name", ""))
+    except Exception:
+        return ""
+
+def save_image_as_ppm(img, out_path: str) -> str:
+    """
+    Save a Blender image datablock to binary PPM (P6).
+    Returns the absolute output path on success, raises on failure.
+    """
+    # Fast-path: if we've already exported this image, reuse the cached path
+    key = _image_cache_key(img)
+    if key in _image_to_ppm_cache:
+        return _image_to_ppm_cache[key]
+    # Some images may be packed; ensure pixels are available
+    w = int(getattr(img, "size", [0, 0])[0])
+    h = int(getattr(img, "size", [0, 0])[1])
+    if w <= 0 or h <= 0:
+        raise RuntimeError("Image has invalid size")
+    # Blender stores linear floats RGBA in pixels
+    px = list(getattr(img, "pixels", []))
+    if not px or len(px) < w * h * 4:
+        # Attempt to load from disk if available
+        try:
+            img.update()
+            px = list(getattr(img, "pixels", []))
+        except Exception:
+            pass
+    if not px or len(px) < w * h * 4:
+        raise RuntimeError("Could not access image pixel buffer")
+    _ensure_dir(os.path.dirname(out_path))
+    # If a file with the same name already exists, reuse it (assume unchanged)
+    if os.path.isfile(out_path):
+        abs_path = os.path.abspath(out_path)
+        _image_to_ppm_cache[key] = abs_path
+        return abs_path
+    with open(out_path, "wb") as f:
+        header = f"P6\n{w} {h}\n255\n".encode("ascii")
+        f.write(header)
+        # Write row-major top-to-bottom as stored
+        # Convert float RGBA to 8-bit RGB (drop alpha)
+        # Note: no gamma correction applied
+        for i in range(0, w * h * 4, 4):
+            r = _to_u8(px[i + 0])
+            g = _to_u8(px[i + 1])
+            b = _to_u8(px[i + 2])
+            f.write(bytes((r, g, b)))
+    abs_path = os.path.abspath(out_path)
+    _image_to_ppm_cache[key] = abs_path
+    return abs_path
+
+def _export_albedo_texture_if_needed(img) -> str:
+    """
+    Export the given Blender image as PPM once and reuse the result.
+    """
+    img_name = getattr(img, "name", "texture")
+    safe = "".join(c if c.isalnum() or c in ("_", "-", ".") else "_" for c in img_name)
+    base_dir = os.path.join(os.path.expanduser("~"), "RayTracer", "s2899221", "Textures")
+    out_ppm = os.path.join(base_dir, f"{safe}_basecolor.ppm")
+    try:
+        return save_image_as_ppm(img, out_ppm)
+    except Exception:
+        return ""
+
 def extract_material_params_from_object(obj):
     alpha = 1.0
     metallic = 0.0
     roughness = 0.5
     ior = 1.5
+    # Albedo defaults: neutral white (so legacy grayscale lighting stays visible)
+    albedo = [1.0, 1.0, 1.0]
+    albedo_texture_ppm = None
 
     try:
         # Prefer active material; otherwise first slot with a material
@@ -41,6 +133,15 @@ def extract_material_params_from_object(obj):
                 if m is not None:
                     material = m
                     break
+
+        # If this object has a material we have already processed exactly, reuse it
+        if material is not None:
+            try:
+                mat_key = int(material.as_pointer())
+            except Exception:
+                mat_key = getattr(material, "name", None)
+            if mat_key is not None and mat_key in _material_params_cache:
+                return dict(_material_params_cache[mat_key])
 
         if material is not None:
             if getattr(material, "use_nodes", False) and getattr(material, "node_tree", None):
@@ -68,10 +169,40 @@ def extract_material_params_from_object(obj):
                         except Exception:
                             return float(fallback)
 
+                    # Metallic/roughness/alpha/IOR scalars
                     metallic = _get_input_value(principled, "Metallic", metallic)
                     roughness = _get_input_value(principled, "Roughness", roughness)
                     alpha = _get_input_value(principled, "Alpha", alpha)
                     ior = _get_input_value(principled, "IOR", ior)
+
+                    # Base Color: prefer socket default if not linked
+                    try:
+                        base_color_socket = principled.inputs.get("Base Color")
+                    except Exception:
+                        base_color_socket = None
+                    if base_color_socket is not None:
+                        # If linked, try to find an Image Texture node and bake to PPM
+                        links = list(getattr(base_color_socket, "links", []))
+                        if links:
+                            try:
+                                from_node = links[0].from_node
+                            except Exception:
+                                from_node = None
+                            if from_node and getattr(from_node, "bl_idname", "") == "ShaderNodeTexImage":
+                                img = getattr(from_node, "image", None)
+                                if img:
+                                    # Export once per unique image and reuse
+                                    exported = _export_albedo_texture_if_needed(img)
+                                    if exported:
+                                        albedo_texture_ppm = exported
+                        # If not linked or baking failed, read default color (RGBA)
+                        if albedo_texture_ppm is None:
+                            try:
+                                dv = getattr(base_color_socket, "default_value", [1.0, 1.0, 1.0, 1.0])
+                                if isinstance(dv, (list, tuple)) and len(dv) >= 3:
+                                    albedo = [float(dv[0]), float(dv[1]), float(dv[2])]
+                            except Exception:
+                                pass
             else:
                 # Fallbacks for non-node materials if available
                 try:
@@ -90,16 +221,35 @@ def extract_material_params_from_object(obj):
                     ior = float(getattr(material, "ior", ior))
                 except Exception:
                     pass
+                # Try to get diffuse_color as albedo if present
+                try:
+                    dc = getattr(material, "diffuse_color", None)
+                    if isinstance(dc, (list, tuple)) and len(dc) >= 3:
+                        albedo = [float(dc[0]), float(dc[1]), float(dc[2])]
+                except Exception:
+                    pass
     except Exception:
         # Silently keep defaults if anything goes wrong
         pass
 
-    return {
+    result = {
         "alpha": float(alpha),
         "metallic": float(metallic),
         "roughness": float(roughness),
         "ior": float(ior),
+        # Store as vec3 in x,y,z so existing parser can read it
+        "albedo": list3_to_dict(albedo),
+        # Absolute path to baked PPM if available
+        "albedo_texture_ppm": (albedo_texture_ppm or ""),
     }
+    # Cache material params for reuse across objects sharing the same material
+    try:
+        if material is not None:
+            mat_key = int(material.as_pointer())
+            _material_params_cache[mat_key] = dict(result)
+    except Exception:
+        pass
+    return result
 
 def mesh_handler(mesh_dict, mesh_obj):
     def cube_handler(cube_dict, cube_obj):

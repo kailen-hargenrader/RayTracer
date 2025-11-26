@@ -54,7 +54,14 @@ static bool read_all_cameras(const std::string& content, std::unordered_map<std:
 		cam.setFocalLength(focal);
 		cam.setSensorSize(sw, sh);
 		cam.setImageResolution(rx, ry);
-		cam.updateRotationMatrix(location, direction);
+		// Optional camera up vector to preserve roll if present
+		double ux=0, uy=0, uz=0;
+		if (parse_vec3(cam_block, "up", ux, uy, uz)) {
+			Vec3 up(ux, uy, uz);
+			cam.updateRotationMatrix(location, direction, up);
+		} else {
+			cam.updateRotationMatrix(location, direction);
+		}
 		out[it->str(1)] = cam;
 	}
 	return !out.empty();
@@ -63,16 +70,20 @@ static bool read_all_cameras(const std::string& content, std::unordered_map<std:
 static void read_all_meshes(const std::string& content, std::vector<Cube>& cubes, std::vector<Plane>& planes, std::vector<Cylinder>& cylinders, std::vector<Sphere>& spheres) {
 	std::string mesh_block; if (!extract_object_block(content, "MESH", mesh_block)) return;
 	std::string cube_block; if (extract_object_block(mesh_block, "Cube", cube_block)) {
-		auto v = Cube::read_from_json(cube_block); cubes.insert(cubes.end(), v.begin(), v.end());
+		auto v = Cube::read_from_json(cube_block);
+		cubes.insert(cubes.end(), std::make_move_iterator(v.begin()), std::make_move_iterator(v.end()));
 	}
 	std::string plane_block; if (extract_object_block(mesh_block, "Plane", plane_block)) {
-		auto v = Plane::read_from_json(plane_block); planes.insert(planes.end(), v.begin(), v.end());
+		auto v = Plane::read_from_json(plane_block);
+		planes.insert(planes.end(), std::make_move_iterator(v.begin()), std::make_move_iterator(v.end()));
 	}
 	std::string cyl_block; if (extract_object_block(mesh_block, "Cylinder", cyl_block)) {
-		auto v = Cylinder::read_from_json(cyl_block); cylinders.insert(cylinders.end(), v.begin(), v.end());
+		auto v = Cylinder::read_from_json(cyl_block);
+		cylinders.insert(cylinders.end(), std::make_move_iterator(v.begin()), std::make_move_iterator(v.end()));
 	}
 	std::string sph_block; if (extract_object_block(mesh_block, "Sphere", sph_block)) {
-		auto v = Sphere::read_from_json(sph_block); spheres.insert(spheres.end(), v.begin(), v.end());
+		auto v = Sphere::read_from_json(sph_block);
+		spheres.insert(spheres.end(), std::make_move_iterator(v.begin()), std::make_move_iterator(v.end()));
 	}
 }
 
@@ -174,7 +185,7 @@ Pixel RayTracer::shade(const Hit& hit, const Ray& view_ray) const {
 	const RayVec3 cam_pos = view_ray.getPosition();
 	HitVec3 v = normalize3(cam_pos.x - p.x, cam_pos.y - p.y, cam_pos.z - p.z);
 
-	// Material/light parameters (grayscale for now; keep named for future color adaptation)
+	// Material/light parameters
 	const double ambient_strength = 0.05;
 	const double diffuse_coeff = 1.0;
 	const double specular_coeff = 0.5;
@@ -189,6 +200,13 @@ Pixel RayTracer::shade(const Hit& hit, const Ray& view_ray) const {
 		//SHOULD NOT GET HERE
 		return Pixel{ 0, 0, 0 };
 	}
+	// Optional metallic adjustment (Principled-style diffuse reduction for metals)
+	double metallic_factor = 0.0;
+	if (hit.hasMesh()) {
+		const Mesh* m = hit.getMesh();
+		metallic_factor = std::clamp(m->getMetallic(), 0.0, 1.0);
+	}
+
 	for (const auto& kv : m_point_lights) {
 		const PointLight& Ls = kv.second;
 		const double lx = Ls.location.x - p.x;
@@ -197,28 +215,162 @@ Pixel RayTracer::shade(const Hit& hit, const Ray& view_ray) const {
 		const double dist2 = std::max(1e-12, lx*lx + ly*ly + lz*lz);
 		const HitVec3 ldir = normalize3(lx, ly, lz);
 
+		// Hard shadow test: cast a ray toward the light, skip if occluded
+		{
+			const double light_dist = std::sqrt(dist2);
+			const double eps = 1e-4;
+			// Offset origin along the geometric normal, oriented toward the light, to avoid self-intersection
+			const double n_dot_l_tmp = n.x*ldir.x + n.y*ldir.y + n.z*ldir.z;
+			const double s = (n_dot_l_tmp >= 0.0) ? 1.0 : -1.0;
+			RayVec3 sh_origin{ p.x + s * n.x * eps, p.y + s * n.y * eps, p.z + s * n.z * eps };
+			RayVec3 sh_dir{ ldir.x, ldir.y, ldir.z };
+			Ray shadow_ray(sh_origin, sh_dir);
+			Hit sh;
+			bool blocked = false;
+			if (one_pass_intersection(shadow_ray, sh) && sh.hasDistanceAlongRay()) {
+				const double t = sh.getDistanceAlongRay();
+				// Treat as blocked if an occluder lies strictly between the point and the light
+				if (t > eps && t < light_dist - eps) {
+					blocked = true;
+				}
+			}
+			if (blocked) {
+				continue;
+			}
+		}
+
 		const double n_dot_l = std::max(0.0, dot3(n.x, n.y, n.z, ldir.x, ldir.y, ldir.z));
-		const double diffuse = diffuse_coeff * n_dot_l;
+		// Metals have reduced/zero diffuse in Principled; approximate by (1 - metallic)
+		const double diffuse = diffuse_coeff * (1.0 - metallic_factor) * n_dot_l;
 
 		// Blinn-Phong half vector
 		const HitVec3 h = normalize3(ldir.x + v.x, ldir.y + v.y, ldir.z + v.z);
 		const double n_dot_h = std::max(0.0, dot3(n.x, n.y, n.z, h.x, h.y, h.z));
-		const double specular = specular_coeff * std::pow(n_dot_h, shininess);
+		// Map roughness to a Blinn-Phong exponent; lower roughness => tighter, stronger highlight
+		double roughness = 0.5;
+		if (hit.hasMesh()) {
+			const Mesh* m = hit.getMesh();
+			roughness = std::clamp(m->getRoughness(), 0.001, 1.0);
+		}
+		const double phong_exp = std::max(2.0, (2.0 / (roughness * roughness)) - 2.0);
+		const double specular = (specular_coeff * 1.25) * std::pow(n_dot_h, phong_exp);
 
 		const double attenuation = Ls.radiant_intensity / dist2;
 		lighting += attenuation * (diffuse + specular);
 	}
 
-	// Add ambient term and clamp
-	double intensity = ambient_strength + lighting;
+	// Add ambient term (reduced for metals) and clamp
+	double intensity = (1.0 - metallic_factor) * ambient_strength + lighting;
 	if (intensity < 0.0) intensity = 0.0;
 	if (intensity > 1.0) intensity = 1.0;
 
-	const unsigned char g = static_cast<unsigned char>(intensity * 255.0 + 0.5);
-	return Pixel{ g, g, g };
+	// Sample albedo from mesh/material
+	Pixel base = Pixel{255,255,255};
+	if (hit.hasMesh()) {
+		const Mesh* m = hit.getMesh();
+		base = m->evaluate_albedo(hit);
+	}
+	auto scale_channel = [&](unsigned char c) -> unsigned char {
+		const double cc = intensity * static_cast<double>(c);
+		const int ci = static_cast<int>(std::round(cc));
+		return static_cast<unsigned char>(std::clamp(ci, 0, 255));
+	};
+	return Pixel{ scale_channel(base.r), scale_channel(base.g), scale_channel(base.b) };
 }
 
-bool RayTracer::render_unaccelerated_ppm(const std::string& camera_id, const std::string& output_filepath, const std::string& color_ppm_path, int samples_per_pixel) const {
+Pixel RayTracer::trace_ray_recursive(const Ray& ray, int depth, int max_scatters, double min_scatter_intensity) const {
+	Hit h; (void)one_pass_intersection(ray, h);
+	Pixel local = this->shade(h, ray);
+
+	// Stop if maximum depth or no surface
+	if (depth >= max_scatters) return local;
+	if (!h.hasMesh()) return local;
+
+	// Fresnel-based reflection weight (Schlick), approximating Principled BSDF behavior
+	const Mesh* m = h.getMesh();
+	const double metallic = m->getMetallic();
+	const double roughness = m->getRoughness();
+	const double ior = m->getIndexOfRefraction();
+	const HitVec3 n = h.getSurfaceNormal();
+	const RayVec3 rd = ray.getDirection();
+	const double rd_len = std::sqrt(rd.x*rd.x + rd.y*rd.y + rd.z*rd.z);
+	const double inv_len = (rd_len > 1e-15) ? (1.0 / rd_len) : 1.0;
+	const double vx = -rd.x * inv_len, vy = -rd.y * inv_len, vz = -rd.z * inv_len;
+	const double cosTheta = std::max(0.0, n.x*vx + n.y*vy + n.z*vz);
+	// F0: dielectrics from IOR, metals from base color intensity
+	double F0 = 0.04;
+	if (metallic <= 0.0) {
+		const double r0 = (ior - 1.0) / (ior + 1.0);
+		F0 = std::clamp(r0 * r0, 0.0, 1.0);
+	} else {
+		Pixel base = m->evaluate_albedo(h);
+		const double avg = (static_cast<double>(base.r) + static_cast<double>(base.g) + static_cast<double>(base.b)) / (3.0 * 255.0);
+		F0 = std::clamp(avg, 0.0, 1.0);
+	}
+	double Fr = F0 + (1.0 - F0) * std::pow(1.0 - cosTheta, 5.0);
+	// Keep Fresnel magnitude; roughness affects lobe shape, not energy here
+
+	// Skip very weak contributions
+	if (Fr <= 0.0 || Fr < min_scatter_intensity) {
+		return local;
+	}
+
+	// Build secondary ray with small offset to avoid self-intersection
+	Ray secondary_ray = ray; // will overwrite below
+	{
+		const HitVec3 ip = h.getIntersectionPoint();
+		RayVec3 sec_origin{ ip.x, ip.y, ip.z };
+		RayVec3 sec_dir = ray.getDirection();
+		if (h.hasReflectedDirection()) {
+			const HitVec3 r = h.getReflectedDirection();
+			sec_dir = RayVec3{ r.x, r.y, r.z };
+		} else {
+			// r = d - 2 (d·n) n
+			const double d_dot_n = rd.x*n.x + rd.y*n.y + rd.z*n.z;
+			sec_dir = RayVec3{ rd.x - 2.0*d_dot_n*n.x, rd.y - 2.0*d_dot_n*n.y, rd.z - 2.0*d_dot_n*n.z };
+		}
+		const double eps = 1e-6;
+		sec_origin.x += sec_dir.x * eps;
+		sec_origin.y += sec_dir.y * eps;
+		sec_origin.z += sec_dir.z * eps;
+		secondary_ray = Ray(sec_origin, sec_dir);
+	}
+
+	// Recurse; misses contribute black naturally via shade()
+	const Pixel sec_color = trace_ray_recursive(secondary_ray, depth + 1, max_scatters, min_scatter_intensity);
+
+	// For metals, tint reflections by base color; for dielectrics keep reflections achromatic
+	Pixel sec_tinted = sec_color;
+	if (metallic > 0.0) {
+		Pixel base = m->evaluate_albedo(h);
+		auto mul = [](unsigned char a, unsigned char b) -> unsigned char {
+			const double aa = static_cast<double>(a) / 255.0;
+			const double bb = static_cast<double>(b);
+			const int ci = static_cast<int>(std::round(aa * bb));
+			return static_cast<unsigned char>(std::clamp(ci, 0, 255));
+		};
+		sec_tinted.r = mul(base.r, sec_color.r);
+		sec_tinted.g = mul(base.g, sec_color.g);
+		sec_tinted.b = mul(base.b, sec_color.b);
+	}
+
+	// Blend local and reflection by Fresnel
+	auto blend_channel = [&](unsigned char a, unsigned char b) -> unsigned char {
+		const double aa = static_cast<double>(a);
+		const double bb = static_cast<double>(b);
+		const double cc = (1.0 - Fr) * aa + Fr * bb;
+		const int ci = static_cast<int>(std::round(cc));
+		return static_cast<unsigned char>(std::clamp(ci, 0, 255));
+	};
+
+	Pixel out;
+	out.r = blend_channel(local.r, sec_tinted.r);
+	out.g = blend_channel(local.g, sec_tinted.g);
+	out.b = blend_channel(local.b, sec_tinted.b);
+	return out;
+}
+
+bool RayTracer::render_unaccelerated_ppm(const std::string& camera_id, const std::string& output_filepath, int samples_per_pixel, int max_scatters, double min_scatter_intensity) const {
 	auto it = m_cameras.find(camera_id);
 	if (it == m_cameras.end()) return false;
 	const Camera& cam = it->second;
@@ -242,21 +394,6 @@ bool RayTracer::render_unaccelerated_ppm(const std::string& camera_id, const std
 		return true;
 	}
 
-	// Optional color image
-	bool use_color = false;
-	Image colorImg = Image(width, height); // placeholder default
-	if (!color_ppm_path.empty()) {
-		std::string lower = color_ppm_path;
-		std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
-		if (lower != "none" && color_ppm_path != "-") {
-			Image tmp(color_ppm_path);
-			if (tmp.width() == width && tmp.height() == height) {
-				colorImg = std::move(tmp);
-				use_color = true;
-			}
-		}
-	}
-
 	// Random jitter in pixel space, bounded to half a pixel in each axis
 	std::mt19937 rng(static_cast<unsigned int>(std::random_device{}()));
 	std::uniform_real_distribution<double> jitter_dist(-0.5, 0.5);
@@ -266,7 +403,6 @@ bool RayTracer::render_unaccelerated_ppm(const std::string& camera_id, const std
 			double accum_r = 0.0;
 			double accum_g = 0.0;
 			double accum_b = 0.0;
-			double accum_intensity = 0.0; // used when modulating a color image
 
 			for (int s = 0; s < samples_per_pixel; ++s) {
 				const double jx = (s == 0) ? 0.0 : jitter_dist(rng);
@@ -278,88 +414,26 @@ bool RayTracer::render_unaccelerated_ppm(const std::string& camera_id, const std
 				cam.pixelToRay(px, py, ro, rd);
 
 				Ray ray(RayVec3{ ro.x, ro.y, ro.z }, RayVec3{ rd.x, rd.y, rd.z });
-				Hit h; (void)one_pass_intersection(ray, h);
-				Pixel spx = this->shade(h, ray);
+				Pixel spx = trace_ray_recursive(ray, 0, max_scatters, min_scatter_intensity);
 
-				// Optional secondary ray based on material properties
-				double secondary_weight = 0.0;
-				bool use_reflect = false;
-				if (h.hasMesh()) {
-					const Mesh* m = h.getMesh();
-					const double metallic = m->getMetallic();
-					const double alpha = m->getAlpha();
-					if (metallic > 0.0) {
-						secondary_weight = metallic;
-						use_reflect = true;
-					} else if (alpha < 1.0) {
-						secondary_weight = std::max(0.0, 1.0 - alpha);
-						use_reflect = false; // transmit
-					}
-					if (secondary_weight > 0.0) {
-						// Build secondary ray: reflection or transmission
-						const HitVec3 ip = h.getIntersectionPoint();
-						RayVec3 sec_origin{ ip.x, ip.y, ip.z };
-						RayVec3 sec_dir = ray.getDirection(); // default: transmission uses original dir
-						if (use_reflect && h.hasReflectedDirection()) {
-							const HitVec3 r = h.getReflectedDirection();
-							sec_dir = RayVec3{ r.x, r.y, r.z };
-						}
-						// Offset origin slightly to avoid self-intersection acne
-						const double eps = 1e-6;
-						sec_origin.x += sec_dir.x * eps;
-						sec_origin.y += sec_dir.y * eps;
-						sec_origin.z += sec_dir.z * eps;
-						Ray secondary_ray(sec_origin, sec_dir);
-						Hit h2; (void)one_pass_intersection(secondary_ray, h2);
-						// For transmission, skip the first hit if it is the same mesh (exit surface)
-						if (!use_reflect && h2.hasMesh() && h.hasMesh() && h2.getMesh() == h.getMesh()) {
-							const HitVec3 ip2 = h2.getIntersectionPoint();
-							RayVec3 sec_origin2{ ip2.x + sec_dir.x * eps, ip2.y + sec_dir.y * eps, ip2.z + sec_dir.z * eps };
-							Ray secondary_ray2(sec_origin2, sec_dir);
-							Hit h3; (void)one_pass_intersection(secondary_ray2, h3);
-							h2 = h3;
-						}
-						const Pixel spx2 = this->shade(h2, secondary_ray);
-						// If secondary ray missed, don't darken the result for metals/transparency
-						const bool secondary_valid = h2.hasDistanceAlongRay() && h2.hasSurfaceNormal() && h2.hasIntersectionPoint();
-						const double w = secondary_valid ? secondary_weight : 0.0;
-						// Linear blend between primary and secondary based on effective weight
-						auto blend_channel = [&](unsigned char a, unsigned char b) -> unsigned char {
-							const double aa = static_cast<double>(a);
-							const double bb = static_cast<double>(b);
-							const double cc = (1.0 - w) * aa + w * bb;
-							const int ci = static_cast<int>(std::round(cc));
-							return static_cast<unsigned char>(std::clamp(ci, 0, 255));
-						};
-						spx.r = blend_channel(spx.r, spx2.r);
-						spx.g = blend_channel(spx.g, spx2.g);
-						spx.b = blend_channel(spx.b, spx2.b);
-					}
-				}
-
-				if (use_color) {
-					const double primary_int = static_cast<double>(spx.r) / 255.0;
-					accum_intensity += primary_int;
-				} else {
-					accum_r += static_cast<double>(spx.r);
-					accum_g += static_cast<double>(spx.g);
-					accum_b += static_cast<double>(spx.b);
-				}
+				accum_r += static_cast<double>(spx.r);
+				accum_g += static_cast<double>(spx.g);
+				accum_b += static_cast<double>(spx.b);
 			}
 
-			if (use_color) {
-				const Pixel base = colorImg.getPixel(x, y);
-				const double avg_intensity = accum_intensity / static_cast<double>(samples_per_pixel);
-				const int rr = static_cast<int>(std::round(avg_intensity * static_cast<double>(base.r)));
-				const int gg = static_cast<int>(std::round(avg_intensity * static_cast<double>(base.g)));
-				const int bb = static_cast<int>(std::round(avg_intensity * static_cast<double>(base.b)));
-				img.setPixel(x, y, rr, gg, bb);
-			} else {
-				const int rr = static_cast<int>(std::round(accum_r / static_cast<double>(samples_per_pixel)));
-				const int gg = static_cast<int>(std::round(accum_g / static_cast<double>(samples_per_pixel)));
-				const int bb = static_cast<int>(std::round(accum_b / static_cast<double>(samples_per_pixel)));
-				img.setPixel(x, y, rr, gg, bb);
-			}
+			const int rr = static_cast<int>(std::round(accum_r / static_cast<double>(samples_per_pixel)));
+			const int gg = static_cast<int>(std::round(accum_g / static_cast<double>(samples_per_pixel)));
+			const int bb = static_cast<int>(std::round(accum_b / static_cast<double>(samples_per_pixel)));
+			// Gamma encode to sRGB for display (Blender uses view transform; approximate with gamma 2.2)
+			auto gamma_encode = [](int c_lin) -> int {
+				double v = std::clamp(static_cast<double>(c_lin), 0.0, 255.0) / 255.0;
+				double v_srgb = std::pow(v, 1.0 / 2.2);
+				return static_cast<int>(std::round(v_srgb * 255.0));
+			};
+			const int r_out = gamma_encode(rr);
+			const int g_out = gamma_encode(gg);
+			const int b_out = gamma_encode(bb);
+			img.setPixel(x, y, r_out, g_out, b_out);
 		}
 	}
 
