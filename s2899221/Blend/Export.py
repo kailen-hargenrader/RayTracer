@@ -195,34 +195,22 @@ def copy_or_save_image_to_textures(image):
     if key in _IMAGE_CACHE:
         return _IMAGE_CACHE[key]
 
-    # Determine destination filename
-    ext = os.path.splitext(image.filepath if image.filepath else image.name_full)[1]
-    if not ext:
-        ext = ".png"
+    # Always export textures as BMP to avoid non-standard decoders
     safe_name = image.name_full.replace(os.sep, "_").replace(":", "_")
-    dest_filename = f"{safe_name}{ext}"
+    dest_filename = f"{safe_name}.bmp"
     dest_abs = os.path.join(TEXTURES_DIR, dest_filename)
     dest_rel = os.path.join("Textures", dest_filename)
 
     # Write/copy
     try:
-        if abs_src and os.path.exists(abs_src):
-            if not os.path.exists(dest_abs):
-                shutil.copy2(abs_src, dest_abs)
-        else:
-            # Packed or generated image: save to disk
-            # Preserve original path values to avoid mutating user's file state
-            orig_filepath_raw = image.filepath_raw
-            try:
-                # Use PNG as a safe default for packed/generated sources
-                if not dest_abs.lower().endswith(".png"):
-                    dest_abs = os.path.splitext(dest_abs)[0] + ".png"
-                    dest_rel = os.path.splitext(dest_rel)[0] + ".png"
-                image.filepath_raw = dest_abs
-                image.file_format = 'PNG'
-                image.save()
-            finally:
-                image.filepath_raw = orig_filepath_raw
+        # Save/convert via Blender to BMP (works for file-backed and packed images)
+        orig_filepath_raw = image.filepath_raw
+        try:
+            image.filepath_raw = dest_abs
+            image.file_format = 'BMP'
+            image.save()
+        finally:
+            image.filepath_raw = orig_filepath_raw
     except Exception as e:
         print(f"[export] Failed to export image '{image.name_full}': {e}")
         return None

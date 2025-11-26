@@ -1,4 +1,5 @@
 #include "raytracer/core/Renderer.h"
+#include "raytracer/utils/Texture.h"
 #include <random>
 #include <limits>
 #include <iostream>
@@ -91,8 +92,12 @@ Vec3 Renderer::shadeBlinnPhong(const Scene& scene, const Hit& hit, const Materia
 	const Vec3 N = hit.normal.normalized();
 	const Vec3 V = (-hit.ray.direction).normalized();
 
+	// Base color: sample texture if available, otherwise use constant
+	Vec3 baseColor = material.baseColor;
+	if (material.baseColorTexture && material.baseColorTexture->isValid()) {
+		baseColor = material.baseColorTexture->sample(hit.uv.x, hit.uv.y);
+	}
 	// Diffuse color and specular color based on metallic
-	const Vec3 baseColor = material.baseColor;
 	const float metallic = saturate(material.metallic);
 	const float roughness = saturate(material.roughness);
 
@@ -101,10 +106,15 @@ Vec3 Renderer::shadeBlinnPhong(const Scene& scene, const Hit& hit, const Materia
 	const float gloss = (1.0f - roughness);
 	const float shininess = 2.0f + gloss * gloss * 256.0f;
 
+	// Simple specular color model (keep metallic workflow, but normalize Blinn-Phong)
 	const Vec3 F0_dielectric(0.04f, 0.04f, 0.04f);
 	const Vec3 specularColor = F0_dielectric * (1.0f - metallic) + baseColor * metallic;
 	const Vec3 diffuseColor = baseColor * (1.0f - metallic);
-	const float ambientK = 0.02f;
+
+	// Normalized Lambert + Blinn-Phong, slightly higher ambient for Blender-like fill
+	const float invPi = 0.31830988618f; // 1/pi
+	const float specNorm = (shininess + 8.0f) * (1.0f / (8.0f * 3.1415926535f));
+	const float ambientK = 0.08f;
 
 	Vec3 color = diffuseColor * ambientK;
 
@@ -123,9 +133,9 @@ Vec3 Renderer::shadeBlinnPhong(const Scene& scene, const Hit& hit, const Materia
 		Vec3 H = (V + L).normalized();
 		const float NdotH = std::max(0.0f, Vec3::dot(N, H));
 
-		// Blinn-Phong terms
-		Vec3 diffuse = diffuseColor * NdotL;
-		Vec3 specular = specularColor * std::pow(NdotH, shininess);
+		// Normalized Blinn-Phong terms
+		Vec3 diffuse = diffuseColor * (NdotL * invPi);
+		Vec3 specular = specularColor * (specNorm * std::pow(NdotH, shininess) * NdotL);
 
 		// Simple inverse-square attenuation using radiant intensity proxy
 		const float atten = Ls.intensity / (4.0f * 3.1415926535f * dist2);

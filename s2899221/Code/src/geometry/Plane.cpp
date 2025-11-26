@@ -78,22 +78,38 @@ bool Plane::intersect(const Ray& rayWorld, float tMin, float tMax, Hit& hit) con
     hit.position = pHit;
     hit.setFaceNormal(normal);
 
-    // Simple planar UV via projection (choose dominant axis of normal)
-    Vec3 n = normal;
-    n = {std::abs(n.x), std::abs(n.y), std::abs(n.z)};
-    Vec3 pLocal = pHit - p0;
-    float u=0.0f, v=0.0f;
-    if (n.z >= n.x && n.z >= n.y) { // project to XY
-        u = (pLocal.x - 0.0f);
-        v = (pLocal.y - 0.0f);
-    } else if (n.y >= n.x) { // XZ
-        u = (pLocal.x - 0.0f);
-        v = (pLocal.z - 0.0f);
-    } else { // YZ
-        u = (pLocal.y - 0.0f);
-        v = (pLocal.z - 0.0f);
-    }
-    hit.uv = {u, v};
+	// UVs consistent with Blender plane: map ordered quad corners to (0,0)-(1,0)-(1,1)-(0,1)
+	// Build a stable 2D projection and solve for linear coefficients
+	auto proj2 = [&](const Vec3& v)->std::pair<float,float>{
+		Vec3 nabs = { std::abs(normal.x), std::abs(normal.y), std::abs(normal.z) };
+		if (nabs.z >= nabs.x && nabs.z >= nabs.y) { // project to XY
+			return { v.x, v.y };
+		} else if (nabs.y >= nabs.x) { // XZ
+			return { v.x, v.z };
+		} else { // YZ
+			return { v.y, v.z };
+		}
+	};
+	const Vec3& q0 = orderedCorners[0];
+	const Vec3& q1 = orderedCorners[1];
+	const Vec3& q3 = orderedCorners[3];
+	auto q0_2 = proj2(q0);
+	auto q1_2 = proj2(q1);
+	auto q3_2 = proj2(q3);
+	auto p_2  = proj2(pHit);
+	float e1x = q1_2.first  - q0_2.first;
+	float e1y = q1_2.second - q0_2.second;
+	float e2x = q3_2.first  - q0_2.first;
+	float e2y = q3_2.second - q0_2.second;
+	float px  = p_2.first   - q0_2.first;
+	float py  = p_2.second  - q0_2.second;
+	float det = e1x*e2y - e1y*e2x;
+	float u=0.0f, v=0.0f;
+	if (std::abs(det) > 1e-12f) {
+		u = ( px*e2y - py*e2x) / det;
+		v = (-px*e1y + py*e1x) / det;
+	}
+	hit.uv = {u, v};
     return true;
 }
 

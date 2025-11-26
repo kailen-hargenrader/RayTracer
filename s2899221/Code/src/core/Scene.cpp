@@ -1,5 +1,6 @@
 #include "raytracer/core/Scene.h"
 #include "raytracer/utils/Json.h"
+#include "raytracer/utils/Texture.h"
 #include "raytracer/geometry/Sphere.h"
 #include "raytracer/geometry/Cube.h"
 #include "raytracer/geometry/Cylinder.h"
@@ -192,6 +193,25 @@ std::shared_ptr<Scene> Scene::loadFromJsonFile(const std::string& path) {
                             auto base = jsonPath.parent_path().parent_path(); // s2899221/
                             std::filesystem::path texAbs = base / std::filesystem::path(so.material.baseColorTexturePath);
                             so.material.baseColorTexturePath = texAbs.string();
+                            // Load texture (prefer exact path; fallback to .bmp/.ppm with same stem)
+                            auto tex = std::make_shared<Texture>();
+                            bool loaded = tex->loadFromFile(so.material.baseColorTexturePath);
+                            if (!loaded) {
+                                std::filesystem::path stemPath = texAbs;
+                                std::filesystem::path bmp = stemPath.replace_extension(".bmp");
+                                if (std::filesystem::exists(bmp)) {
+                                    loaded = tex->loadFromFile(bmp.string());
+                                    if (loaded) so.material.baseColorTexturePath = bmp.string();
+                                }
+                            }
+                            if (!loaded) {
+                                std::filesystem::path stemPath = texAbs;
+                                std::filesystem::path ppm = stemPath.replace_extension(".ppm");
+                                if (std::filesystem::exists(ppm)) {
+                                    // We do not support PPM here; reserved for future. Leave unloaded.
+                                }
+                            }
+                            if (loaded) so.material.baseColorTexture = tex;
                         }
                         // Bounds from corners
                         AABB b;
@@ -254,6 +274,25 @@ std::shared_ptr<Scene> Scene::loadFromJsonFile(const std::string& path) {
                             auto base = jsonPath.parent_path().parent_path(); // s2899221/
                             std::filesystem::path texAbs = base / std::filesystem::path(so.material.baseColorTexturePath);
                             so.material.baseColorTexturePath = texAbs.string();
+                            // Load texture (prefer exact path; fallback to .bmp/.ppm with same stem)
+                            auto tex = std::make_shared<Texture>();
+                            bool loaded = tex->loadFromFile(so.material.baseColorTexturePath);
+                            if (!loaded) {
+                                std::filesystem::path stemPath = texAbs;
+                                std::filesystem::path bmp = stemPath.replace_extension(".bmp");
+                                if (std::filesystem::exists(bmp)) {
+                                    loaded = tex->loadFromFile(bmp.string());
+                                    if (loaded) so.material.baseColorTexturePath = bmp.string();
+                                }
+                            }
+                            if (!loaded) {
+                                std::filesystem::path stemPath = texAbs;
+                                std::filesystem::path ppm = stemPath.replace_extension(".ppm");
+                                if (std::filesystem::exists(ppm)) {
+                                    // We do not support PPM here; reserved for future. Leave unloaded.
+                                }
+                            }
+                            if (loaded) so.material.baseColorTexture = tex;
                         }
                         scene->objects.push_back(std::move(so));
                     }
