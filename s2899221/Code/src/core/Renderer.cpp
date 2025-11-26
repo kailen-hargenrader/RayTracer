@@ -9,6 +9,30 @@ namespace rt {
 
 static constexpr float kEpsilon = 1e-4f;
 
+static inline Vec3 reflect(const Vec3& v, const Vec3& n) {
+	return v - n * (2.0f * Vec3::dot(v, n));
+}
+
+static inline bool refract(const Vec3& v, const Vec3& n, float eta, Vec3& refractedOut) {
+	// v and n should be normalized; eta = eta_i/eta_t
+	float cosTheta = std::max(0.0f, -Vec3::dot(v, n));
+	Vec3 rOutPerp = (v + n * cosTheta) * eta;
+	float k = 1.0f - rOutPerp.lengthSquared();
+	if (k < 0.0f) {
+		return false; // total internal reflection
+	}
+	Vec3 rOutParallel = n * -std::sqrt(k);
+	refractedOut = rOutPerp + rOutParallel;
+	return true;
+}
+
+static inline float schlickReflectance(float cosTheta, float ior) {
+	// cosTheta is cosine of angle between incident and normal (assumed in [0,1])
+	float r0 = (1.0f - ior) / (1.0f + ior);
+	r0 = r0 * r0;
+	return r0 + (1.0f - r0) * std::pow(1.0f - cosTheta, 5.0f);
+}
+
 static inline float saturate(float x) {
 	return x < 0.0f ? 0.0f : (x > 1.0f ? 1.0f : x);
 }
@@ -80,10 +104,39 @@ Renderer::TraceResult Renderer::traceRay(const Scene& scene, const Ray& ray, con
 	const Material& mat = obj.material;
 	Vec3 local = shadeBlinnPhong(scene, hit, mat, opts);
 
-	// Placeholders for future reflection/refraction mixing based on metallic/alpha/ior
-	// For now, just output local shading
+	// Reflection / Refraction
+	Vec3 finalColor = local;
+	if (depth < opts.maxDepth) {
+		const Vec3 N = hit.normal.normalized();
+		const Vec3 I = hit.ray.direction.normalized();
+
+		const float metallic = saturate(mat.metallic);
+		const float alpha = saturate(mat.alpha);
+		const float transparency = 1.0f - alpha;
+		const float ior = std::max(1.0f, mat.ior);
+
+		// Fresnel term (dielectric); for metals we bias toward reflection
+		const float cosTheta = std::max(0.0f, -Vec3::dot(I, N));
+		float F = schlickReflectance(cosTheta, ior);
+		F = F * (1.0f - metallic) + 1.0f * metallic; // metals reflect nearly all
+
+		// Opaque: mix local with reflection
+		if (transparency <= 1e-3f) {
+			Vec3 Rdir = reflect(I, N).normalized();
+			Ray rRay(hit.position + N * kEpsilon * 4.0f, Rdir);
+			TraceResult rTr = traceRay(scene, rRay, opts, depth + 1);
+			finalColor = (1.0f - F) * local + F * rTr.color;
+		} else {
+			// Simplest transparency: continue the ray straight through without bending
+			Vec3 passDir = I;
+			Ray passRay(hit.position + passDir * kEpsilon * 8.0f, passDir);
+			Vec3 passCol = traceRay(scene, passRay, opts, depth + 1).color;
+			finalColor = alpha * local + transparency * passCol;
+		}
+	}
+
 	result.hit = true;
-	result.color = saturate(local);
+	result.color = saturate(finalColor);
 	return result;
 }
 
@@ -124,10 +177,9 @@ Vec3 Renderer::shadeBlinnPhong(const Scene& scene, const Hit& hit, const Materia
 		const float dist = std::sqrt(dist2);
 		L = L / dist;
 
-		// Hard shadows
-		if (occludedToLight(scene, hit.position + N * kEpsilon * 4.0f, L, dist - kEpsilon * 8.0f)) {
-			continue;
-		}
+		// Visibility accounting for transparency
+		float vis = shadowTransmittance(scene, hit.position + N * kEpsilon * 4.0f, L, dist - kEpsilon * 8.0f);
+		if (vis <= 1e-4f) continue;
 
 		const float NdotL = std::max(0.0f, Vec3::dot(N, L));
 		Vec3 H = (V + L).normalized();
@@ -139,33 +191,51 @@ Vec3 Renderer::shadeBlinnPhong(const Scene& scene, const Hit& hit, const Materia
 
 		// Simple inverse-square attenuation using radiant intensity proxy
 		const float atten = Ls.intensity / (4.0f * 3.1415926535f * dist2);
-		color += (diffuse + specular) * atten;
+		color += (diffuse + specular) * atten * vis;
 	}
 
 	return color;
 }
 
 Vec3 Renderer::backgroundColor(const Ray& ray, const RenderOptions& opts) const {
-	// Simple vertical gradient
-	Vec3 d = ray.direction.normalized();
-	float t = 0.5f * (d.z + 1.0f);
-	return (1.0f - t) * opts.backgroundBottom + t * opts.backgroundTop;
+	// Uniform background color
+	return opts.backgroundColor;
 }
 
-bool Renderer::occludedToLight(const Scene& scene, const Vec3& pos, const Vec3& dirToLight, float maxDist) const {
-	Ray shadowRay(pos, dirToLight);
-	Hit h;
-	// Traverse via BVH if available, otherwise brute-force
-	if (!scene.objects.empty()) {
-		// Prefer BVH (always present in Scene)
-		if (scene.bvh.intersect(scene.objects, shadowRay, kEpsilon, maxDist, h, nullptr)) return true;
-		// In case BVH is empty (scene not built), brute-force
-		for (const SceneObject& o : scene.objects) {
-			Hit tmp;
-			if (o.mesh->intersect(shadowRay, kEpsilon, maxDist, tmp)) return true;
+float Renderer::shadowTransmittance(const Scene& scene, const Vec3& pos, const Vec3& dirToLight, float maxDist) const {
+	Ray ray(pos, dirToLight);
+	float trans = 1.0f;
+	float remainingDist = maxDist;
+
+	for (int iter = 0; iter < 64 && trans > 1e-3f && remainingDist > kEpsilon; ++iter) {
+		Hit h;
+		int objIdx = -1;
+		bool hit = scene.bvh.intersect(scene.objects, ray, kEpsilon, remainingDist, h, &objIdx);
+		if (!hit || objIdx < 0) break;
+
+		const Material& m = scene.objects[objIdx].material;
+		const float alpha = saturate(m.alpha);
+		const float metallic = saturate(m.metallic);
+
+		// Fully opaque or metal blocks light
+		if (alpha >= 0.999f || metallic >= 0.999f) {
+			return 0.0f;
 		}
+
+		// Approximate Fresnel transmission factor for dielectrics
+		float ior = std::max(1.0f, m.ior);
+		float cosTheta = std::fabs(Vec3::dot(-dirToLight, h.normal.normalized()));
+		float F = schlickReflectance(cosTheta, ior);
+		float materialTrans = (1.0f - alpha) * (1.0f - F);
+
+		trans *= materialTrans;
+		// Advance the ray origin slightly forward and reduce remaining distance
+		float advance = h.t + kEpsilon * 8.0f;
+		ray.origin = ray.at(advance);
+		remainingDist -= advance;
 	}
-	return false;
+
+	return saturate(trans);
 }
 
 } // namespace rt

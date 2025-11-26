@@ -11,11 +11,10 @@ namespace rt {
 struct RenderOptions {
 	bool useBVH { true };
 	int samplesPerPixel { 1 };
-	int maxDepth { 1 }; // reserved for future reflection/refraction
+	int maxDepth { 5 }; // recursion depth for reflection/refraction
 	bool useRussianRoulette { false }; // reserved
 	float minThroughput { 0.02f }; // reserved
-	Vec3 backgroundTop { 0.6f, 0.8f, 1.0f };
-	Vec3 backgroundBottom { 0.1f, 0.1f, 0.1f };
+	Vec3 backgroundColor { 0.04f, 0.04f, 0.02f };
 };
 
 class Renderer {
@@ -31,7 +30,8 @@ private:
 	TraceResult traceRay(const Scene& scene, const Ray& ray, const RenderOptions& opts, int depth) const;
 	Vec3 shadeBlinnPhong(const Scene& scene, const Hit& hit, const Material& material, const RenderOptions& opts) const;
 	Vec3 backgroundColor(const Ray& ray, const RenderOptions& opts) const;
-	bool occludedToLight(const Scene& scene, const Vec3& pos, const Vec3& dirToLight, float maxDist) const;
+	// Returns [0..1] multiplicative light visibility along dirToLight, accounting for transparency
+	float shadowTransmittance(const Scene& scene, const Vec3& pos, const Vec3& dirToLight, float maxDist) const;
 };
 
 } // namespace rt
