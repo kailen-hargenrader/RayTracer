@@ -1,187 +1,161 @@
 #include "raytracer/core/Renderer.h"
-#include "raytracer/utils/Texture.h"
 #include <random>
+#include <limits>
+#include <iostream>
+#include <algorithm>
 
 namespace rt {
 
-void Renderer::setScene(std::shared_ptr<Scene> scene) {
-    m_scene = std::move(scene);
-    if (m_scene && m_opts.useBVH) {
-        m_scene->bvh.build(m_scene->objects);
-    }
-    // Load textures if any
-    if (m_scene) {
-        for (auto& o : m_scene->objects) {
-            if (!o.material.baseColorTexturePath.empty()) {
-                o.material.baseColorTexture = std::make_shared<Texture>();
-                o.material.baseColorTexture->loadFromFile(o.material.baseColorTexturePath);
-            }
-        }
-    }
+static constexpr float kEpsilon = 1e-4f;
+
+static inline float saturate(float x) {
+	return x < 0.0f ? 0.0f : (x > 1.0f ? 1.0f : x);
 }
 
-bool Renderer::intersectScene(const Ray& ray, float tMin, float tMax, Hit& hit, SceneObject const** outObj) const {
-    bool any = false;
-    if (m_opts.useBVH) {
-        int objIndex = -1;
-        any = m_scene->bvh.intersect(m_scene->objects, ray, tMin, tMax, hit, &objIndex);
-        if (any && outObj) {
-            *outObj = (objIndex >= 0 && objIndex < static_cast<int>(m_scene->objects.size()))
-                        ? &m_scene->objects[objIndex]
-                        : nullptr;
-        }
-        return any;
-    }
-    // Unaccelerated
-    float closest = tMax;
-    const SceneObject* found = nullptr;
-    Hit tmp;
-    for (const auto& obj : m_scene->objects) {
-        if (!obj.bounds.intersect(ray, tMin, closest)) continue;
-        if (obj.mesh->intersect(ray, tMin, closest, tmp)) {
-            any = true;
-            closest = tmp.t;
-            hit = tmp;
-            found = &obj;
-        }
-    }
-    if (outObj) *outObj = found;
-    return any;
+static inline Vec3 saturate(const Vec3& v) {
+	return { saturate(v.x), saturate(v.y), saturate(v.z) };
 }
 
-bool Renderer::isOccluded(const Vec3& origin, const Vec3& toLight, float maxDist) const {
-    Vec3 dir = toLight.normalized();
-    Ray shadowRay(origin + dir * 1e-4f, dir);
-    Hit h;
-    SceneObject const* obj = nullptr;
-    if (m_opts.useBVH) {
-        return m_scene->bvh.intersect(m_scene->objects, shadowRay, 1e-4f, maxDist - 1e-4f, h);
-    } else {
-        for (const auto& o : m_scene->objects) {
-            if (!o.bounds.intersect(shadowRay, 1e-4f, maxDist - 1e-4f)) continue;
-            Hit tmp;
-            if (o.mesh->intersect(shadowRay, 1e-4f, maxDist - 1e-4f, tmp)) {
-                return true;
-            }
-        }
-        return false;
-    }
+void Renderer::render(const Scene& scene, Image& outImage, const RenderOptions& opts) {
+	const int W = scene.camera.width();
+	const int H = scene.camera.height();
+	outImage.resize(W, H);
+
+	// Build BVH if requested
+	if (opts.useBVH) {
+		const_cast<Scene&>(scene).bvh.build(scene.objects);
+	}
+
+	std::mt19937 rng(42);
+	std::uniform_real_distribution<float> uni(0.0f, 1.0f);
+
+	for (int y = 0; y < H; ++y) {
+		for (int x = 0; x < W; ++x) {
+			Vec3 accum(0.0f, 0.0f, 0.0f);
+			for (int s = 0; s < std::max(1, opts.samplesPerPixel); ++s) {
+				float jx = (opts.samplesPerPixel > 1) ? uni(rng) : 0.5f;
+				float jy = (opts.samplesPerPixel > 1) ? uni(rng) : 0.5f;
+				Ray ray = scene.camera.generateRay(x, y, jx, jy);
+				TraceResult tr = traceRay(scene, ray, opts, 0);
+				accum += tr.color;
+			}
+			float invSpp = 1.0f / static_cast<float>(std::max(1, opts.samplesPerPixel));
+			outImage.setPixel(x, y, accum * invSpp);
+		}
+	}
 }
 
-Vec3 Renderer::shadeLocal(const Hit& hit, const SceneObject& obj, const Vec3& viewDir) const {
-    const Material& m = obj.material;
-    // Sample baseColor texture if present
-    Vec3 base = m.baseColor;
-    if (m.baseColorTexture && hit.uv.x >= 0.0f) {
-        base = m.baseColorTexture->sample(hit.uv.x, hit.uv.y);
-    }
-    // Disney-ish mixing
-    float metallic = std::max(0.0f, std::min(1.0f, m.metallic));
-    Vec3 F0Color = (1.0f - metallic) * Vec3(0.04f, 0.04f, 0.04f) + metallic * base;
-    Vec3 kd = base * (1.0f - metallic);
-    float shininess = shininessFromRoughness(m.roughness);
-    Vec3 color = m_opts.ambientColor * base;
-    for (const auto& L : m_scene->lights) {
-        Vec3 toL = L.position - hit.position;
-        float dist2 = std::max(1e-4f, Vec3::dot(toL, toL));
-        float dist = std::sqrt(dist2);
-        if (isOccluded(hit.position, toL, dist)) continue;
-        Vec3 ldir = toL / dist;
-        float NdotL = std::max(0.0f, Vec3::dot(hit.normal, ldir));
-        Vec3 diffuse = kd * NdotL;
-        Vec3 hdir = (ldir + viewDir).normalized();
-        float NdotH = std::max(0.0f, Vec3::dot(hit.normal, hdir));
-        Vec3 specular = F0Color * std::pow(NdotH, shininess);
-        float attenuation = (L.intensity * m_opts.lightIntensityScale) / (dist2);
-        color += (diffuse + specular) * attenuation;
-    }
-    return Vec3::clamp01(color);
+Renderer::TraceResult Renderer::traceRay(const Scene& scene, const Ray& ray, const RenderOptions& opts, int depth) const {
+	TraceResult result;
+	result.hit = false;
+	result.color = backgroundColor(ray, opts);
+
+	Hit hit;
+	hit.ray = ray;
+	int hitObjectIndex = -1;
+
+	bool anyHit = false;
+	if (opts.useBVH) {
+		anyHit = scene.bvh.intersect(scene.objects, ray, kEpsilon, std::numeric_limits<float>::infinity(), hit, &hitObjectIndex);
+	} else {
+		float closest = std::numeric_limits<float>::infinity();
+		for (size_t i = 0; i < scene.objects.size(); ++i) {
+			Hit tmp = hit;
+			if (scene.objects[i].mesh->intersect(ray, kEpsilon, closest, tmp)) {
+				closest = tmp.t;
+				tmp.albedo = scene.objects[i].material.baseColor;
+				hit = tmp;
+				hitObjectIndex = static_cast<int>(i);
+				anyHit = true;
+			}
+		}
+	}
+
+	if (!anyHit || hitObjectIndex < 0) {
+		return result;
+	}
+
+	const SceneObject& obj = scene.objects[hitObjectIndex];
+	const Material& mat = obj.material;
+	Vec3 local = shadeBlinnPhong(scene, hit, mat, opts);
+
+	// Placeholders for future reflection/refraction mixing based on metallic/alpha/ior
+	// For now, just output local shading
+	result.hit = true;
+	result.color = saturate(local);
+	return result;
 }
 
-Vec3 Renderer::traceRay(const Ray& ray, int depth, float throughput) const {
-    if (depth > m_opts.maxDepth || throughput < m_opts.minThroughput) return {0,0,0};
+Vec3 Renderer::shadeBlinnPhong(const Scene& scene, const Hit& hit, const Material& material, const RenderOptions& opts) const {
+	// Basic parameters
+	const Vec3 N = hit.normal.normalized();
+	const Vec3 V = (-hit.ray.direction).normalized();
 
-    Hit hit;
-    const SceneObject* obj = nullptr;
-    if (!intersectScene(ray, 1e-4f, 1e30f, hit, &obj) || obj == nullptr) {
-        // Simple sky gradient background (linear)
-        float t = 0.5f * (ray.direction.z + 1.0f);
-        Vec3 cTop = {0.6f, 0.8f, 1.0f};
-        Vec3 cBot = {1.0f, 1.0f, 1.0f};
-        return (1.0f - t) * cBot + t * cTop;
-    }
-    Vec3 viewDir = (-ray.direction).normalized();
+	// Diffuse color and specular color based on metallic
+	const Vec3 baseColor = material.baseColor;
+	const float metallic = saturate(material.metallic);
+	const float roughness = saturate(material.roughness);
 
-    // Local shading
-    Vec3 localColor = shadeLocal(hit, *obj, viewDir);
+	// Map roughness to shininess exponent (simple heuristic)
+	// roughness=0 -> high exponent, roughness=1 -> low exponent
+	const float gloss = (1.0f - roughness);
+	const float shininess = 2.0f + gloss * gloss * 256.0f;
 
-    // Fresnel and reflection/refraction
-    const Material& mat = obj->material;
-    float ior = std::max(1.0f, mat.ior);
-    // F0 for dielectrics from ior; for metals, approximate using base color luminance
-    float F0 = (mat.metallic > 0.5f)
-        ? std::max(0.02f, (mat.baseColor.x + mat.baseColor.y + mat.baseColor.z) / 3.0f)
-        : ((1.0f - ior) / (1.0f + ior)); // We'll square later
-    F0 = F0 * F0;
+	const Vec3 F0_dielectric(0.04f, 0.04f, 0.04f);
+	const Vec3 specularColor = F0_dielectric * (1.0f - metallic) + baseColor * metallic;
+	const Vec3 diffuseColor = baseColor * (1.0f - metallic);
+	const float ambientK = 0.02f;
 
-    float cosTheta = std::max(0.0f, Vec3::dot(hit.normal, viewDir));
-    float Fr = fresnelSchlick(cosTheta, F0);
+	Vec3 color = diffuseColor * ambientK;
 
-    Vec3 reflectedColor(0,0,0), refractedColor(0,0,0);
-    // Reflection
-    Vec3 reflDir = reflect(-viewDir, hit.normal).normalized();
-    reflectedColor = traceRay(Ray(hit.position + reflDir * 1e-4f, reflDir), depth + 1, throughput * Fr);
+	for (const PointLight& Ls : scene.lights) {
+		Vec3 L = (Ls.position - hit.position);
+		const float dist2 = std::max(1e-6f, L.lengthSquared());
+		const float dist = std::sqrt(dist2);
+		L = L / dist;
 
-    // Refraction only if not fully opaque
-    if (mat.alpha < 1.0f) {
-        Vec3 n = hit.normal;
-        float etai = 1.0f, etat = ior;
-        float cosi = std::max(-1.0f, std::min(1.0f, Vec3::dot(viewDir, n)));
-        if (cosi < 0.0f) {
-            cosi = -cosi;
-        } else {
-            std::swap(etai, etat);
-            n = -n;
-        }
-        float eta = etai / etat;
-        Vec3 refrDir;
-        if (refract(-viewDir, n, eta, refrDir)) {
-            refrDir = refrDir.normalized();
-            refractedColor = traceRay(Ray(hit.position + refrDir * 1e-4f, refrDir), depth + 1, throughput * (1.0f - Fr));
-        }
-    }
+		// Hard shadows
+		if (occludedToLight(scene, hit.position + N * kEpsilon * 4.0f, L, dist - kEpsilon * 8.0f)) {
+			continue;
+		}
 
-    // Energy-conserving mix: dielectric uses Fr; metallic reduces diffuse already
-    Vec3 result = localColor * (1.0f - Fr) + reflectedColor * Fr + refractedColor * (1.0f - Fr) * (1.0f - mat.alpha);
-    return Vec3::clamp01(result);
+		const float NdotL = std::max(0.0f, Vec3::dot(N, L));
+		Vec3 H = (V + L).normalized();
+		const float NdotH = std::max(0.0f, Vec3::dot(N, H));
+
+		// Blinn-Phong terms
+		Vec3 diffuse = diffuseColor * NdotL;
+		Vec3 specular = specularColor * std::pow(NdotH, shininess);
+
+		// Simple inverse-square attenuation using radiant intensity proxy
+		const float atten = Ls.intensity / (4.0f * 3.1415926535f * dist2);
+		color += (diffuse + specular) * atten;
+	}
+
+	return color;
 }
 
-bool Renderer::renderToPPM(const std::string& outputPath) {
-    if (!m_scene) return false;
-    int W = m_scene->camera.width();
-    int H = m_scene->camera.height();
-    Image img(W, H);
+Vec3 Renderer::backgroundColor(const Ray& ray, const RenderOptions& opts) const {
+	// Simple vertical gradient
+	Vec3 d = ray.direction.normalized();
+	float t = 0.5f * (d.z + 1.0f);
+	return (1.0f - t) * opts.backgroundBottom + t * opts.backgroundTop;
+}
 
-    std::mt19937 rng(12345);
-    std::uniform_real_distribution<float> dist(0.0f, 1.0f);
-    int spp = std::max(1, m_opts.samplesPerPixel);
-
-    for (int y = 0; y < H; ++y) {
-        for (int x = 0; x < W; ++x) {
-            Vec3 color(0,0,0);
-            for (int s = 0; s < spp; ++s) {
-                float jx = (spp == 1) ? 0.5f : dist(rng);
-                float jy = (spp == 1) ? 0.5f : dist(rng);
-                Ray ray = m_scene->camera.generateRay(x, y, jx, jy);
-                color += traceRay(ray, 0, 1.0f);
-            }
-            color /= static_cast<float>(spp);
-            // Gamma encode to approximate sRGB
-            color = { std::pow(color.x, 1.0f/2.2f), std::pow(color.y, 1.0f/2.2f), std::pow(color.z, 1.0f/2.2f) };
-            img.setPixel(x, y, color);
-        }
-    }
-    return img.writePPM(outputPath, true);
+bool Renderer::occludedToLight(const Scene& scene, const Vec3& pos, const Vec3& dirToLight, float maxDist) const {
+	Ray shadowRay(pos, dirToLight);
+	Hit h;
+	// Traverse via BVH if available, otherwise brute-force
+	if (!scene.objects.empty()) {
+		// Prefer BVH (always present in Scene)
+		if (scene.bvh.intersect(scene.objects, shadowRay, kEpsilon, maxDist, h, nullptr)) return true;
+		// In case BVH is empty (scene not built), brute-force
+		for (const SceneObject& o : scene.objects) {
+			Hit tmp;
+			if (o.mesh->intersect(shadowRay, kEpsilon, maxDist, tmp)) return true;
+		}
+	}
+	return false;
 }
 
 } // namespace rt

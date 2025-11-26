@@ -1,7 +1,6 @@
 import os
 import json
 import shutil
-from mathutils import Vector
 import bpy
 
 
@@ -332,10 +331,10 @@ def export_cameras(scene):
             continue
 
         oid = next_object_id()
-        loc = vec3(obj.location)
-        # Blender camera looks along -Z in local space
-        forward = (obj.matrix_world.to_quaternion() @ Vector((0.0, 0.0, -1.0))).normalized()
-        direction = vec3(forward)
+        # Use world transform decomposition to match Blender's location and rotation
+        mw = obj.matrix_world
+        loc_v, rot_q, _scl_v = mw.decompose()
+        rot_e = rot_q.to_euler('XYZ')
 
         focal_length_mm = float(cam.lens)
         sensor_w_mm = float(cam.sensor_width)
@@ -344,8 +343,8 @@ def export_cameras(scene):
 
         out["Perspective"].append({
             "id": oid,
-            "location": loc,
-            "direction": direction,
+            "location": [float(loc_v.x), float(loc_v.y), float(loc_v.z)],
+            "rotationEuler": [float(rot_e.x), float(rot_e.y), float(rot_e.z)],
             "focalLengthMM": focal_length_mm,
             "sensorWidthMM": sensor_w_mm,
             "sensorHeightMM": sensor_h_mm,
@@ -400,15 +399,13 @@ def export_meshes():
         else:
             # TRS in world space (derived from matrix_world to capture parenting/constraints and correct rotation)
             mw = obj.matrix_world
-            loc_v = mw.to_translation()
-            rot_q = mw.to_quaternion()  # (w, x, y, z)
-            scl_v = mw.to_scale()
-            # Also provide Euler in a fixed order derived from world matrix for compatibility
-            rot_e = mw.to_euler('XYZ')
+            # Decompose once to get consistent world transform
+            loc_v, rot_q, scl_v = mw.decompose()  # rot_q is mathutils.Quaternion
+            # Derive Euler from the same quaternion to avoid discrepancies
+            rot_e = rot_q.to_euler('XYZ')
             out[kind].append({
                 "id": oid,
                 "translation": [float(loc_v.x), float(loc_v.y), float(loc_v.z)],
-                "rotationQuat": [float(rot_q.w), float(rot_q.x), float(rot_q.y), float(rot_q.z)],
                 "rotationEuler": [float(rot_e.x), float(rot_e.y), float(rot_e.z)],  # radians, XYZ order from world matrix
                 "scale": [float(scl_v.x), float(scl_v.y), float(scl_v.z)],
                 "material": mat_info

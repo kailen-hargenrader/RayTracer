@@ -1,76 +1,70 @@
 #include <iostream>
 #include <string>
-#include <cstring>
+#include <memory>
+#include <cstdlib>
 #include <algorithm>
-#include <filesystem>
 #include "raytracer/core/Scene.h"
 #include "raytracer/core/Renderer.h"
+#include "raytracer/utils/Image.h"
 
 using namespace rt;
 
 static void printUsage() {
-    std::cout << "Usage:\n"
-              << "  rt_render <scene.json> <output.ppm> [--bvh|--no-bvh] [--spp N] [--maxDepth N] [--minThroughput X] [--ambient r,g,b] [--lightScale X]\n";
+	std::cout << "Usage: rt_render <scene.json> <out.ppm> [--bvh] [--spp N] [--maxDepth N] [--minThroughput f] [--no-rr]\n";
 }
 
 int main(int argc, char** argv) {
-    if (argc < 3) {
-        printUsage();
-        return 1;
-    }
-    std::string jsonPath = argv[1];
-    std::string outPath = argv[2];
+	if (argc < 3) {
+		printUsage();
+		return 1;
+	}
+	std::string scenePath = argv[1];
+	std::string outPath = argv[2];
 
-    RendererOptions opts;
-    // Defaults
-    opts.useBVH = true;
-    opts.samplesPerPixel = 4;
-    opts.maxDepth = 5;
-    opts.minThroughput = 0.02f;
+	RenderOptions opts;
+	// Defaults aligned with batch
+	opts.useBVH = false;
+	opts.samplesPerPixel = 1;
+	opts.maxDepth = 1;
+	opts.useRussianRoulette = false;
+	opts.minThroughput = 0.02f;
 
-    for (int i = 3; i < argc; ++i) {
-        if (std::strcmp(argv[i], "--bvh") == 0) {
-            opts.useBVH = true;
-        } else if (std::strcmp(argv[i], "--no-bvh") == 0) {
-            opts.useBVH = false;
-        } else if (std::strcmp(argv[i], "--spp") == 0 && i + 1 < argc) {
-            opts.samplesPerPixel = std::max(1, std::atoi(argv[++i]));
-        } else if (std::strcmp(argv[i], "--maxDepth") == 0 && i + 1 < argc) {
-            opts.maxDepth = std::max(0, std::atoi(argv[++i]));
-        } else if (std::strcmp(argv[i], "--minThroughput") == 0 && i + 1 < argc) {
-            opts.minThroughput = std::max(0.0f, static_cast<float>(std::atof(argv[++i])));
-        } else if (std::strcmp(argv[i], "--ambient") == 0 && i + 1 < argc) {
-            std::string s = argv[++i];
-            float r=0,g=0,b=0;
-            if (std::sscanf(s.c_str(), "%f,%f,%f", &r, &g, &b) == 3) {
-                opts.ambientColor = {r,g,b};
-            }
-        } else if (std::strcmp(argv[i], "--lightScale") == 0 && i + 1 < argc) {
-            opts.lightIntensityScale = static_cast<float>(std::atof(argv[++i]));
-        } else {
-            std::cout << "Unknown or incomplete option: " << argv[i] << "\n";
-            printUsage();
-            return 1;
-        }
-    }
+	for (int i = 3; i < argc; ++i) {
+		std::string a = argv[i];
+		if (a == "--bvh") {
+			opts.useBVH = true;
+		} else if (a == "--no-rr") {
+			opts.useRussianRoulette = false;
+		} else if (a == "--spp" && i + 1 < argc) {
+			opts.samplesPerPixel = std::max(1, std::atoi(argv[++i]));
+		} else if (a == "--maxDepth" && i + 1 < argc) {
+			opts.maxDepth = std::max(1, std::atoi(argv[++i]));
+		} else if (a == "--minThroughput" && i + 1 < argc) {
+			opts.minThroughput = std::max(0.0f, static_cast<float>(std::atof(argv[++i])));
+		} else {
+			std::cout << "Unknown or malformed option: " << a << "\n";
+			printUsage();
+			return 1;
+		}
+	}
 
-    auto scene = Scene::loadFromJsonFile(jsonPath);
-    if (!scene) {
-        std::cerr << "Failed to load scene: " << jsonPath << "\n";
-        return 2;
-    }
+	auto scene = Scene::loadFromJsonFile(scenePath);
+	if (!scene) {
+		std::cerr << "Failed to load scene: " << scenePath << "\n";
+		return 1;
+	}
 
-    Renderer renderer(opts);
-    renderer.setScene(scene);
+	Image img(scene->camera.width(), scene->camera.height());
+	Renderer renderer;
+	renderer.render(*scene, img, opts);
+	if (!img.writePPM(outPath, true)) {
+		std::cerr << "Failed to write image: " << outPath << "\n";
+		return 1;
+	}
 
-    std::filesystem::create_directories(std::filesystem::path(outPath).parent_path());
-
-    if (!renderer.renderToPPM(outPath)) {
-        std::cerr << "Render failed.\n";
-        return 3;
-    }
-    std::cout << "Wrote: " << outPath << "\n";
-    return 0;
+	std::cout << "Rendered " << scene->camera.width() << "x" << scene->camera.height()
+		<< " spp=" << opts.samplesPerPixel << " to " << outPath << "\n";
+	return 0;
 }
 
 

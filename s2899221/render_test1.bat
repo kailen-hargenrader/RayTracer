@@ -10,7 +10,7 @@ if not exist "%EXE%" (
   exit /b 1
 )
 
-"%EXE%" "%SCENE%" "%OUT%" --bvh --spp 16 --maxDepth 5 --minThroughput 0.02
+"%EXE%" "%SCENE%" "%OUT%" --bvh --spp 16 --maxDepth 5 --minThroughput 0.02 --no-rr
 if errorlevel 1 exit /b 1
 
 python Code\tools\view_ppm.py "%OUT%"

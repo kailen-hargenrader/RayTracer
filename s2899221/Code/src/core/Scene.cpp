@@ -77,6 +77,20 @@ std::shared_ptr<Scene> Scene::loadFromJsonFile(const std::string& path) {
                     };
                     Vec3 loc = getVec3Key(c0, "location");
                     Vec3 dir = getVec3Key(c0, "direction");
+                    // If explicit direction is missing, derive from rotationEuler when available
+                    auto itRot = c0.find("rotationEuler");
+                    bool hasRot = (itRot != c0.end()) && itRot->second.isArray() && (itRot->second.asArray().size() >= 3);
+                    if (!hasRot && (dir.x == 0.0f && dir.y == 0.0f && dir.z == 1.0f)) {
+                        // no rotation and direction defaulted: keep default
+                    } else if (hasRot) {
+                        const auto& ra = itRot->second.asArray();
+                        float rx = static_cast<float>(ra[0].asNumber());
+                        float ry = static_cast<float>(ra[1].asNumber());
+                        float rz = static_cast<float>(ra[2].asNumber());
+                        Mat4 R = Mat4::rotationXYZ(rx, ry, rz);
+                        // Assume camera looks along -Z in its local space
+                        dir = R.transformDirection({0.0f, 0.0f, -1.0f}).normalized();
+                    }
                     float focal = 35.0f, sensorW = 36.0f, sensorH = 24.0f;
                     auto fnum = [&](const char* k, float& dst){
                         auto itv = c0.find(k);
