@@ -1,0 +1,24 @@
+IMPLEMENTED
+- Ray tracing core: Sphere, Cube, Cylinder, Plane primitives
+- BVH acceleration structure (optional via --bvh) for faster intersection and shadow queries
+- Camera: perspective model, focal length, sensor size, resolution (from JSON)
+- Materials: baseColor (RGB or ImageTexture), metallic, roughness, IOR, alpha (opacity)
+- Texture support: base color image sampling with UVs; automatic path resolution from Blender export (BMP fallback)
+- Lighting: point lights with inverse-square attenuation
+- Shading: Lambert diffuse + normalized Blinn-Phong specular (roughness maps to shininess)
+- Shadows: hard shadows with transparency-aware transmittance along shadow rays
+- Reflections/Refractions: mirror reflection and Snell refraction with Schlick Fresnel mix
+- Roughness-based glossy reflection blur (distributed sampling), configurable via --roughSamples
+- Anti-aliasing: stochastic samples per pixel (--spp)
+- Recursion control: --maxDepth for reflection/refraction depth
+- Deterministic RNG sampling passed through recursive bounces
+- Uniform background color
+- CLI app (rt_render): --bvh, --spp N, --maxDepth N, --roughSamples N, --minThroughput f, --no-rr
+- Scene loader (JSON): camera, lights, meshes and materials; TRS and quaternion rotations; Blender scale alignment
+- Plane meshes can be specified by 4 world-space corners
+- AABB bounds computed and transformed for accelerated traversal
+- Export script (Blend/Export.py): exports Blender scenes to JSON (camera, point lights, primitives, materials incl. baseColor/metallic/roughness/IOR/alpha, optional image texture path)
+- Batch script(s): example render runner (render_test1.bat) to invoke rt_render with typical flags
+
+NOT IMPLEMENTED:
+- Motion Blur
