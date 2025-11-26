@@ -12,17 +12,27 @@ public:
     void set(const Vec3& position, const Vec3& direction, float focalLengthMM, float sensorWidthMM, float sensorHeightMM, int pixelWidth, int pixelHeight) {
         m_position = position;
         m_forward = direction.normalized();
-        Vec3 upWorld(0.0f, 1.0f, 0.0f);
-        if (std::abs(Vec3::dot(upWorld, m_forward)) > 0.999f) upWorld = {0.0f, 0.0f, 1.0f};
+        // Blender is Z-up; prefer Z as world up and fall back to Y if parallel
+        Vec3 upWorld(0.0f, 0.0f, 1.0f);
+        if (std::abs(Vec3::dot(upWorld, m_forward)) > 0.999f) upWorld = {0.0f, 1.0f, 0.0f};
         m_right = Vec3::cross(m_forward, upWorld).normalized();
         m_up = Vec3::cross(m_right, m_forward).normalized();
 
         m_pixelWidth = pixelWidth;
         m_pixelHeight = pixelHeight;
-        // Compute FOV based on thin lens (pinhole projection)
-        // Horizontal FOV
-        m_fovX = 2.0f * std::atan((0.5f * sensorWidthMM) / focalLengthMM);
-        m_fovY = 2.0f * std::atan((0.5f * sensorHeightMM) / focalLengthMM);
+        // Compute FOV consistent with Blender's Sensor Fit = AUTO (approximation):
+        // AUTO selects HORIZONTAL if image width >= image height, else VERTICAL.
+        float imgAspect = (pixelHeight > 0) ? (static_cast<float>(pixelWidth) / static_cast<float>(pixelHeight)) : 1.0f;
+        bool horizontalFit = pixelWidth >= pixelHeight;
+        if (horizontalFit) {
+            m_fovX = 2.0f * std::atan((0.5f * sensorWidthMM) / focalLengthMM);
+            float halfTanX = std::tan(0.5f * m_fovX);
+            m_fovY = 2.0f * std::atan(halfTanX / std::max(1e-6f, imgAspect));
+        } else {
+            m_fovY = 2.0f * std::atan((0.5f * sensorHeightMM) / focalLengthMM);
+            float halfTanY = std::tan(0.5f * m_fovY);
+            m_fovX = 2.0f * std::atan(halfTanY * imgAspect);
+        }
     }
 
     int width() const { return m_pixelWidth; }

@@ -36,7 +36,7 @@ struct AABB {
             if (t0 > t1) std::swap(t0, t1);
             tMin = t0 > tMin ? t0 : tMin;
             tMax = t1 < tMax ? t1 : tMax;
-            if (tMax <= tMin) return false;
+            if (tMax < tMin) return false;
         }
         return true;
     }

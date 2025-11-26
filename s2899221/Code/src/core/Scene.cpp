@@ -76,21 +76,27 @@ std::shared_ptr<Scene> Scene::loadFromJsonFile(const std::string& path) {
                         return {0,0,1};
                     };
                     Vec3 loc = getVec3Key(c0, "location");
-                    Vec3 dir = getVec3Key(c0, "direction");
-                    // If explicit direction is missing, derive from rotationEuler when available
-                    auto itRot = c0.find("rotationEuler");
-                    bool hasRot = (itRot != c0.end()) && itRot->second.isArray() && (itRot->second.asArray().size() >= 3);
-                    if (!hasRot && (dir.x == 0.0f && dir.y == 0.0f && dir.z == 1.0f)) {
-                        // no rotation and direction defaulted: keep default
-                    } else if (hasRot) {
-                        const auto& ra = itRot->second.asArray();
-                        float rx = static_cast<float>(ra[0].asNumber());
-                        float ry = static_cast<float>(ra[1].asNumber());
-                        float rz = static_cast<float>(ra[2].asNumber());
-                        Mat4 R = Mat4::rotationXYZ(rx, ry, rz);
-                        // Assume camera looks along -Z in its local space
-                        dir = R.transformDirection({0.0f, 0.0f, -1.0f}).normalized();
+                    Vec3 dir(0.0f, 0.0f, -1.0f); // default camera forward is -Z in local space
+                    // Prefer explicit direction if provided
+                    auto itDir = c0.find("direction");
+                    if (itDir != c0.end() && itDir->second.isArray() && itDir->second.asArray().size() >= 3) {
+                        const auto& a = itDir->second.asArray();
+                        dir = { static_cast<float>(a[0].asNumber()), static_cast<float>(a[1].asNumber()), static_cast<float>(a[2].asNumber()) };
+                    } else {
+                        // Fallback to rotationEuler if present
+                        auto itRot = c0.find("rotationEuler");
+                        bool hasRot = (itRot != c0.end()) && itRot->second.isArray() && (itRot->second.asArray().size() >= 3);
+                        if (hasRot) {
+                            const auto& ra = itRot->second.asArray();
+                            float rx = static_cast<float>(ra[0].asNumber());
+                            float ry = static_cast<float>(ra[1].asNumber());
+                            float rz = static_cast<float>(ra[2].asNumber());
+                            Mat4 R = Mat4::rotationXYZ(rx, ry, rz);
+                            // Assume camera looks along -Z in its local space
+                            dir = R.transformDirection({0.0f, 0.0f, -1.0f});
+                        }
                     }
+                    dir = dir.normalized();
                     float focal = 35.0f, sensorW = 36.0f, sensorH = 24.0f;
                     auto fnum = [&](const char* k, float& dst){
                         auto itv = c0.find(k);
@@ -180,6 +186,13 @@ std::shared_ptr<Scene> Scene::loadFromJsonFile(const std::string& path) {
                         SceneObject so;
                         so.mesh = pl;
                         so.material = mat;
+                        // Resolve texture absolute path if present
+                        if (!so.material.baseColorTexturePath.empty()) {
+                            std::filesystem::path jsonPath(path);
+                            auto base = jsonPath.parent_path().parent_path(); // s2899221/
+                            std::filesystem::path texAbs = base / std::filesystem::path(so.material.baseColorTexturePath);
+                            so.material.baseColorTexturePath = texAbs.string();
+                        }
                         // Bounds from corners
                         AABB b;
                         for (const auto& p : cs) b.expand(p);
@@ -188,6 +201,10 @@ std::shared_ptr<Scene> Scene::loadFromJsonFile(const std::string& path) {
                     } else {
                         Vec3 t, r, s;
                         readTRS(it, t, r, s);
+                        // Blender primitives (Cube/Sphere/Cylinder) default to size 2 units (side=2, radius=1, height=2).
+                        // Our canonical primitives use unit size with half-extents/radius = 0.5.
+                        // Multiply incoming scales by 2 to match Blender's apparent size.
+                        s = s * 2.0f;
                         // Optional quaternion rotation (world-space), preferred over Euler if present
                         float qw = 0.0f, qx = 0.0f, qy = 0.0f, qz = 0.0f;
                         bool hasQuat = false;

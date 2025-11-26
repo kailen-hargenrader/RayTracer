@@ -1,4 +1,7 @@
 #include "raytracer/geometry/Plane.h"
+#include <algorithm>
+#include <array>
+#include <cmath>
 
 namespace rt {
 
@@ -29,7 +32,45 @@ bool Plane::intersect(const Ray& rayWorld, float tMin, float tMax, Hit& hit) con
     float t = Vec3::dot(p0 - rayWorld.origin, normal) / denom;
     if (t < tMin || t > tMax) return false;
     Vec3 pHit = rayWorld.at(t);
-    if (!pointInQuad(pHit, m_corners, normal)) return false;
+
+    // Robust inside test for arbitrary corner ordering:
+    // 1) Project to 2D based on dominant normal axis
+    // 2) Order the four corners around their centroid
+    // 3) Perform a convex quad edge-sign test
+    auto project2D = [&](const Vec3& v)->std::pair<float,float>{
+        Vec3 nabs = { std::abs(normal.x), std::abs(normal.y), std::abs(normal.z) };
+        if (nabs.z >= nabs.x && nabs.z >= nabs.y) { // project to XY
+            return { v.x, v.y };
+        } else if (nabs.y >= nabs.x) { // XZ
+            return { v.x, v.z };
+        } else { // YZ
+            return { v.y, v.z };
+        }
+    };
+
+    std::array<std::pair<float,float>,4> c2d;
+    for (int i = 0; i < 4; ++i) c2d[i] = project2D(m_corners[i]);
+    auto p2d = project2D(pHit);
+
+    // Centroid in 2D
+    float cx = 0.0f, cy = 0.0f;
+    for (int i = 0; i < 4; ++i) { cx += c2d[i].first; cy += c2d[i].second; }
+    cx *= 0.25f; cy *= 0.25f;
+
+    // Indices ordered by angle around centroid
+    std::array<int,4> idx {0,1,2,3};
+    std::sort(idx.begin(), idx.end(), [&](int a, int b){
+        float angA = std::atan2(c2d[a].second - cy, c2d[a].first - cx);
+        float angB = std::atan2(c2d[b].second - cy, c2d[b].first - cx);
+        return angA < angB;
+    });
+
+    std::array<Vec3,4> orderedCorners {
+        m_corners[idx[0]], m_corners[idx[1]], m_corners[idx[2]], m_corners[idx[3]]
+    };
+
+    bool inside = pointInQuad(pHit, orderedCorners, normal);
+    if (!inside) return false;
 
     hit.didHit = true;
     hit.t = t;
