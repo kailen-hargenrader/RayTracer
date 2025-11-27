@@ -125,7 +125,7 @@ Renderer::TraceResult Renderer::traceRay(const Scene& scene, const Ray& ray, con
 
 	// Reflection / Refraction
 	Vec3 finalColor = local;
-	if (depth < opts.maxDepth) {
+	if (depth + 1 < opts.maxDepth) {
 		const Vec3 N = hit.normal.normalized();
 		const Vec3 I = hit.ray.direction.normalized();
 
