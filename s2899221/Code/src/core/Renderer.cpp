@@ -142,6 +142,10 @@ Renderer::TraceResult Renderer::traceRay(const Scene& scene, const Ray& ray, con
 
 		// Opaque: mix local with reflection
 		if (effectiveTransparency <= 1e-3f) {
+			if (opts.transmissionOnly) {
+				// No reflection: keep only local lighting for opaque surfaces
+				finalColor = local;
+			} else {
 			// Roughness-driven distributed reflection sampling
 			const float rough = saturate(mat.roughness);
 			// Map roughness to shininess exponent (consistent with local BRDF)
@@ -176,52 +180,62 @@ Renderer::TraceResult Renderer::traceRay(const Scene& scene, const Ray& ray, con
 			const float invRS = 1.0f / static_cast<float>(rSamples);
 			Vec3 reflAvg = reflAccum * invRS;
 			finalColor = (1.0f - F) * local + F * reflAvg;
+			}
 		} else {
-			// Refraction using Snell's law; prevent whitening on metals by scaling transmission
-			bool frontFace = (Vec3::dot(I, N) < 0.0f);
-			Vec3 n = frontFace ? N : (N * -1.0f);
-			float eta = frontFace ? (1.0f / ior) : ior; // eta_i/eta_t
-
-			Vec3 Tdir;
-			bool hasRefract = refract(I, n, eta, Tdir);
-
-			Vec3 Rdir = reflect(I, n).normalized();
-			Vec3 reflCol(0.0f, 0.0f, 0.0f);
-			Vec3 refrCol(0.0f, 0.0f, 0.0f);
-
-			// For simplicity, apply roughness blur only to reflection lobe here as well.
-			const float rough = saturate(mat.roughness);
-			const float gloss = (1.0f - rough);
-			const float shininess = 2.0f + gloss * gloss * 256.0f;
-			const int maxRS = std::max(1, opts.roughnessMaxSamples);
-			const int rSamples = (maxRS <= 1) ? 1 : std::max(1, static_cast<int>(1 + rough * static_cast<float>(maxRS - 1)));
-			std::uniform_real_distribution<float> uni(0.0f, 1.0f);
-			if (rSamples <= 1 || rough <= 1e-4f) {
-				Ray rRay(hit.position + n * kEpsilon * 4.0f, Rdir);
-				reflCol = traceRay(scene, rRay, opts, depth + 1, rng).color;
-			} else {
-				Vec3 Raxis = Rdir;
-				Vec3 acc(0.0f, 0.0f, 0.0f);
-				for (int i = 0; i < rSamples; ++i) {
-					const float u1 = uni(rng);
-					const float u2 = uni(rng);
-					Vec3 dir = samplePhongLobe(Raxis, shininess, u1, u2);
-					if (Vec3::dot(dir, n) < 0.0f) {
-						dir = (dir - n * (2.0f * Vec3::dot(dir, n))).normalized();
-					}
-					Ray rRay(hit.position + n * kEpsilon * 4.0f, dir);
-					acc += traceRay(scene, rRay, opts, depth + 1, rng).color;
-				}
-				reflCol = acc * (1.0f / static_cast<float>(rSamples));
-			}
-
-			if (hasRefract) {
+			// Transmission branch
+			if (opts.transmissionOnly) {
+				// Straight-through: continue ray without bending and without reflection
+				Vec3 Tdir = I; // no refraction
 				Ray tRay(hit.position + Tdir * kEpsilon * 8.0f, Tdir.normalized());
-				refrCol = traceRay(scene, tRay, opts, depth + 1, rng).color;
-			}
+				Vec3 tCol = traceRay(scene, tRay, opts, depth + 1, rng).color;
+				finalColor = alpha * local + effectiveTransparency * tCol;
+			} else {
+				// Refraction using Snell's law; prevent whitening on metals by scaling transmission
+				bool frontFace = (Vec3::dot(I, N) < 0.0f);
+				Vec3 n = frontFace ? N : (N * -1.0f);
+				float eta = frontFace ? (1.0f / ior) : ior; // eta_i/eta_t
 
-			Vec3 specMix = hasRefract ? (F * reflCol + (1.0f - F) * refrCol) : reflCol;
-			finalColor = alpha * local + effectiveTransparency * specMix;
+				Vec3 Tdir;
+				bool hasRefract = refract(I, n, eta, Tdir);
+
+				Vec3 Rdir = reflect(I, n).normalized();
+				Vec3 reflCol(0.0f, 0.0f, 0.0f);
+				Vec3 refrCol(0.0f, 0.0f, 0.0f);
+
+				// For simplicity, apply roughness blur only to reflection lobe here as well.
+				const float rough = saturate(mat.roughness);
+				const float gloss = (1.0f - rough);
+				const float shininess = 2.0f + gloss * gloss * 256.0f;
+				const int maxRS = std::max(1, opts.roughnessMaxSamples);
+				const int rSamples = (maxRS <= 1) ? 1 : std::max(1, static_cast<int>(1 + rough * static_cast<float>(maxRS - 1)));
+				std::uniform_real_distribution<float> uni(0.0f, 1.0f);
+				if (rSamples <= 1 || rough <= 1e-4f) {
+					Ray rRay(hit.position + n * kEpsilon * 4.0f, Rdir);
+					reflCol = traceRay(scene, rRay, opts, depth + 1, rng).color;
+				} else {
+					Vec3 Raxis = Rdir;
+					Vec3 acc(0.0f, 0.0f, 0.0f);
+					for (int i = 0; i < rSamples; ++i) {
+						const float u1 = uni(rng);
+						const float u2 = uni(rng);
+						Vec3 dir = samplePhongLobe(Raxis, shininess, u1, u2);
+						if (Vec3::dot(dir, n) < 0.0f) {
+							dir = (dir - n * (2.0f * Vec3::dot(dir, n))).normalized();
+						}
+						Ray rRay(hit.position + n * kEpsilon * 4.0f, dir);
+						acc += traceRay(scene, rRay, opts, depth + 1, rng).color;
+					}
+					reflCol = acc * (1.0f / static_cast<float>(rSamples));
+				}
+
+				if (hasRefract) {
+					Ray tRay(hit.position + Tdir * kEpsilon * 8.0f, Tdir.normalized());
+					refrCol = traceRay(scene, tRay, opts, depth + 1, rng).color;
+				}
+
+				Vec3 specMix = hasRefract ? (F * reflCol + (1.0f - F) * refrCol) : reflCol;
+				finalColor = alpha * local + effectiveTransparency * specMix;
+			}
 		}
 	}
 

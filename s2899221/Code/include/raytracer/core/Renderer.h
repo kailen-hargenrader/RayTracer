@@ -13,6 +13,9 @@ struct RenderOptions {
 	bool useBVH { true };
 	int samplesPerPixel { 1 };
 	int maxDepth { 5 }; // maximum path length in segments; 1 = primary only (no bounces)
+	// When true, disables both reflection and refraction. Transparent materials pass rays straight through
+	// (no bending), and opaque materials render with local lighting only (no glossy reflection).
+	bool transmissionOnly { false };
 	// Maximum number of stochastic reflection samples used to blur reflections based on material roughness.
 	// 1 = no blur (perfect mirror). Higher values increase quality and cost.
 	int roughnessMaxSamples { 1 };

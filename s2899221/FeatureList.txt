@@ -21,4 +21,5 @@ IMPLEMENTED
 - Batch script(s): example render runner (render_test1.bat) to invoke rt_render with typical flags
 
 NOT IMPLEMENTED:
+- Soft Shadows
 - Motion Blur
